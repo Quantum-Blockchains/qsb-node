@@ -63,7 +63,7 @@ jobs:
       - name: Install cargo-audit and cargo-deny
         run: |
           command -v cargo-audit >/dev/null 2>&1 || cargo install --locked cargo-audit --version 0.21.1
-          command -v cargo-deny >/dev/null 2>&1 || cargo install --locked cargo-deny
+          command -v cargo-deny >/dev/null 2>&1 || cargo install --locked cargo-deny --version 0.16.2
       - name: cargo audit
         run: cargo audit
       - name: cargo deny (licenses, bans, sources)
