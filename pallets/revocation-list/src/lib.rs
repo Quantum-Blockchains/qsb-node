@@ -53,8 +53,15 @@ pub mod pallet {
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        StatusListCreated { status_list_id: Vec<u8>, issuer_did: Vec<u8> },
-        StatusUpdated { status_list_id: Vec<u8>, status_index: u32, revoked: bool },
+        StatusListCreated {
+            status_list_id: Vec<u8>,
+            issuer_did: Vec<u8>,
+        },
+        StatusUpdated {
+            status_list_id: Vec<u8>,
+            status_index: u32,
+            revoked: bool,
+        },
     }
 
     #[pallet::call]
@@ -127,7 +134,10 @@ pub mod pallet {
                     .checked_mul(8)
                     .ok_or(Error::<T>::StatusIndexOutOfBounds)?;
                 let status_index_usize = status_index as usize;
-                ensure!(status_index_usize < bit_count, Error::<T>::StatusIndexOutOfBounds);
+                ensure!(
+                    status_index_usize < bit_count,
+                    Error::<T>::StatusIndexOutOfBounds
+                );
 
                 let byte_index = status_index_usize / 8;
                 let bit_index = (status_index_usize % 8) as u8;
