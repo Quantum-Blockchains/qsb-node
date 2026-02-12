@@ -62,7 +62,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install cargo-audit and cargo-deny
         run: |
-          command -v cargo-audit >/dev/null 2>&1 || cargo install --locked cargo-audit
+          command -v cargo-audit >/dev/null 2>&1 || cargo install --locked cargo-audit --version 0.21.1
           command -v cargo-deny >/dev/null 2>&1 || cargo install --locked cargo-deny
       - name: cargo audit
         run: cargo audit
