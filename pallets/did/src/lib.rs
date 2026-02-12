@@ -70,7 +70,8 @@ pub mod pallet {
     }
 
     #[pallet::storage]
-    pub(super) type DidRecords<T: Config> = StorageMap<_, Twox64Concat, [u8; 32], DidDetails, OptionQuery>;
+    pub(super) type DidRecords<T: Config> =
+        StorageMap<_, Twox64Concat, [u8; 32], DidDetails, OptionQuery>;
 
     #[pallet::error]
     pub enum Error<T> {
@@ -89,16 +90,45 @@ pub mod pallet {
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        DidCreated { did: Vec<u8> },
-        KeyAdded { did: Vec<u8>, public_key: Vec<u8> },
-        KeyRevoked { did: Vec<u8>, public_key: Vec<u8> },
-        DidDeactivated { did: Vec<u8> },
-        KeyRotated { did: Vec<u8>, old_public_key: Vec<u8>, new_public_key: Vec<u8> },
-        RolesUpdated { did: Vec<u8>, public_key: Vec<u8> },
-        ServiceAdded { did: Vec<u8>, service_id: Vec<u8> },
-        ServiceRemoved { did: Vec<u8>, service_id: Vec<u8> },
-        MetadataSet { did: Vec<u8>, key: Vec<u8> },
-        MetadataRemoved { did: Vec<u8>, key: Vec<u8> },
+        DidCreated {
+            did: Vec<u8>,
+        },
+        KeyAdded {
+            did: Vec<u8>,
+            public_key: Vec<u8>,
+        },
+        KeyRevoked {
+            did: Vec<u8>,
+            public_key: Vec<u8>,
+        },
+        DidDeactivated {
+            did: Vec<u8>,
+        },
+        KeyRotated {
+            did: Vec<u8>,
+            old_public_key: Vec<u8>,
+            new_public_key: Vec<u8>,
+        },
+        RolesUpdated {
+            did: Vec<u8>,
+            public_key: Vec<u8>,
+        },
+        ServiceAdded {
+            did: Vec<u8>,
+            service_id: Vec<u8>,
+        },
+        ServiceRemoved {
+            did: Vec<u8>,
+            service_id: Vec<u8>,
+        },
+        MetadataSet {
+            did: Vec<u8>,
+            key: Vec<u8>,
+        },
+        MetadataRemoved {
+            did: Vec<u8>,
+            key: Vec<u8>,
+        },
     }
 
     #[pallet::call]
@@ -112,7 +142,10 @@ pub mod pallet {
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
             let did_id = Self::did_id_from_public_key(&public_key);
-            ensure!(!DidRecords::<T>::contains_key(did_id), Error::<T>::DidAlreadyExists);
+            ensure!(
+                !DidRecords::<T>::contains_key(did_id),
+                Error::<T>::DidAlreadyExists
+            );
 
             let details = DidDetails {
                 version: 0,
@@ -286,7 +319,11 @@ pub mod pallet {
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
                 ensure!(!details.deactivated, Error::<T>::DidDeactivated);
-                if let Some(existing) = details.metadata.iter_mut().find(|item| item.key == entry.key) {
+                if let Some(existing) = details
+                    .metadata
+                    .iter_mut()
+                    .find(|item| item.key == entry.key)
+                {
                     existing.value = entry.value;
                 } else {
                     details.metadata.push(entry);
@@ -344,7 +381,10 @@ pub mod pallet {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
                 ensure!(!details.deactivated, Error::<T>::DidDeactivated);
                 ensure!(
-                    !details.keys.iter().any(|key| key.public_key == new_public_key),
+                    !details
+                        .keys
+                        .iter()
+                        .any(|key| key.public_key == new_public_key),
                     Error::<T>::KeyAlreadyExists
                 );
 

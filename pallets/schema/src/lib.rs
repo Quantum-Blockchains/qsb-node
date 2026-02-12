@@ -49,8 +49,14 @@ pub mod pallet {
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
-        SchemaRegistered { schema_id: Vec<u8>, issuer_did: Vec<u8> },
-        SchemaDeprecated { schema_id: Vec<u8>, issuer_did: Vec<u8> },
+        SchemaRegistered {
+            schema_id: Vec<u8>,
+            issuer_did: Vec<u8>,
+        },
+        SchemaDeprecated {
+            schema_id: Vec<u8>,
+            issuer_did: Vec<u8>,
+        },
     }
 
     #[pallet::call]
