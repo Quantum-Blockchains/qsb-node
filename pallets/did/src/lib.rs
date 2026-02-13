@@ -2,6 +2,7 @@
 
 use frame_support::ensure;
 pub use pallet::*;
+use sp_core::mldsa44;
 use sp_std::vec::Vec;
 
 #[frame_support::pallet]
@@ -9,13 +10,22 @@ pub mod pallet {
     use super::*;
     use frame_support::{dispatch::DispatchResult, pallet_prelude::*};
     use frame_system::pallet_prelude::{BlockNumberFor, OriginFor};
-    use sp_io::hashing::blake2_256;
+    use sp_io::{crypto::mldsa44_verify, hashing::blake2_256};
     use sp_runtime::traits::Zero;
     use sp_std::vec;
 
     const DID_PREFIX: &[u8] = b"did:qsb:";
     const DID_MATERIAL_PREFIX: &[u8] = b"QSB_DID";
     const DID_CREATE_PREFIX: &[u8] = b"QSB_DID_CREATE";
+    const DID_ADD_KEY_PREFIX: &[u8] = b"QSB_DID_ADD_KEY";
+    const DID_REVOKE_KEY_PREFIX: &[u8] = b"QSB_DID_REVOKE_KEY";
+    const DID_DEACTIVATE_PREFIX: &[u8] = b"QSB_DID_DEACTIVATE";
+    const DID_ADD_SERVICE_PREFIX: &[u8] = b"QSB_DID_ADD_SERVICE";
+    const DID_REMOVE_SERVICE_PREFIX: &[u8] = b"QSB_DID_REMOVE_SERVICE";
+    const DID_SET_METADATA_PREFIX: &[u8] = b"QSB_DID_SET_METADATA";
+    const DID_REMOVE_METADATA_PREFIX: &[u8] = b"QSB_DID_REMOVE_METADATA";
+    const DID_ROTATE_KEY_PREFIX: &[u8] = b"QSB_DID_ROTATE_KEY";
+    const DID_UPDATE_ROLES_PREFIX: &[u8] = b"QSB_DID_UPDATE_ROLES";
 
     #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
     #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
@@ -85,6 +95,9 @@ pub mod pallet {
         ServiceAlreadyExists,
         ServiceNotFound,
         MetadataNotFound,
+        InvalidSignature,
+        InvalidPublicKey,
+        InvalidDidSignature,
     }
 
     #[pallet::event]
@@ -138,7 +151,7 @@ pub mod pallet {
         pub fn create_did(
             origin: OriginFor<T>,
             public_key: Vec<u8>,
-            _did_signature: Vec<u8>,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
             let did_id = Self::did_id_from_public_key(&public_key);
@@ -146,6 +159,10 @@ pub mod pallet {
                 !DidRecords::<T>::contains_key(did_id),
                 Error::<T>::DidAlreadyExists
             );
+
+            let mut payload = DID_CREATE_PREFIX.to_vec();
+            payload.extend_from_slice(&public_key.encode());
+            Self::verify_signature_with_public_key(&did_signature, &payload, &public_key)?;
 
             let details = DidDetails {
                 version: 0,
@@ -172,9 +189,15 @@ pub mod pallet {
             did_id: Vec<u8>,
             public_key: Vec<u8>,
             roles: Vec<KeyRole>,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_ADD_KEY_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&public_key.encode());
+            payload.extend_from_slice(&roles.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
@@ -204,9 +227,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             did_id: Vec<u8>,
             public_key: Vec<u8>,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_REVOKE_KEY_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&public_key.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
@@ -231,9 +259,16 @@ pub mod pallet {
 
         #[pallet::call_index(3)]
         #[pallet::weight({0})]
-        pub fn deactivate_did(origin: OriginFor<T>, did_id: Vec<u8>) -> DispatchResult {
+        pub fn deactivate_did(
+            origin: OriginFor<T>,
+            did_id: Vec<u8>,
+            did_signature: Vec<u8>,
+        ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_DEACTIVATE_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
@@ -254,9 +289,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             did_id: Vec<u8>,
             service: ServiceEndpoint,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_ADD_SERVICE_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&service.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
             let service_id = service.id.clone();
 
@@ -282,9 +322,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             did_id: Vec<u8>,
             service_id: Vec<u8>,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_REMOVE_SERVICE_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&service_id.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
@@ -310,9 +355,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             did_id: Vec<u8>,
             entry: MetadataEntry,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_SET_METADATA_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&entry.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
             let key = entry.key.clone();
 
@@ -342,9 +392,14 @@ pub mod pallet {
             origin: OriginFor<T>,
             did_id: Vec<u8>,
             key: Vec<u8>,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_REMOVE_METADATA_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&key.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
@@ -372,9 +427,16 @@ pub mod pallet {
             old_public_key: Vec<u8>,
             new_public_key: Vec<u8>,
             roles: Vec<KeyRole>,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_ROTATE_KEY_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&old_public_key.encode());
+            payload.extend_from_slice(&new_public_key.encode());
+            payload.extend_from_slice(&roles.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
@@ -420,9 +482,15 @@ pub mod pallet {
             did_id: Vec<u8>,
             public_key: Vec<u8>,
             roles: Vec<KeyRole>,
+            did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
+            let mut payload = DID_UPDATE_ROLES_PREFIX.to_vec();
+            payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&public_key.encode());
+            payload.extend_from_slice(&roles.encode());
             let did_id = Self::decode_did_id(&did_id)?;
+            Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
@@ -445,6 +513,43 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
+        fn verify_signature_with_public_key(
+            did_signature: &[u8],
+            payload: &[u8],
+            public_key: &[u8],
+        ) -> Result<(), Error<T>> {
+            let pk =
+                mldsa44::Public::try_from(public_key).map_err(|_| Error::<T>::InvalidPublicKey)?;
+            let sig = mldsa44::Signature::try_from(did_signature)
+                .map_err(|_| Error::<T>::InvalidDidSignature)?;
+
+            ensure!(
+                mldsa44_verify(&sig, payload, &pk),
+                Error::<T>::InvalidSignature
+            );
+            Ok(())
+        }
+
+        fn verify_did_signature(
+            did_id: [u8; 32],
+            did_signature: &[u8],
+            payload: &[u8],
+        ) -> Result<(), Error<T>> {
+            let details = DidRecords::<T>::get(did_id).ok_or(Error::<T>::DidNotFound)?;
+            let sig = mldsa44::Signature::try_from(did_signature)
+                .map_err(|_| Error::<T>::InvalidDidSignature)?;
+
+            for key in details.keys.iter().filter(|key| !key.revoked) {
+                if let Ok(pk) = mldsa44::Public::try_from(key.public_key.as_slice()) {
+                    if mldsa44_verify(&sig, payload, &pk) {
+                        return Ok(());
+                    }
+                }
+            }
+
+            Err(Error::<T>::InvalidSignature)
+        }
+
         fn did_id_from_public_key(public_key: &[u8]) -> [u8; 32] {
             let genesis = frame_system::Pallet::<T>::block_hash(BlockNumberFor::<T>::zero());
             let mut material = Vec::with_capacity(
@@ -476,14 +581,6 @@ pub mod pallet {
                 .map_err(|_| Error::<T>::InvalidDidId)?;
             let did_id: [u8; 32] = decoded.try_into().map_err(|_| Error::<T>::InvalidDidId)?;
             Ok(did_id)
-        }
-
-        #[allow(dead_code)]
-        fn create_payload(public_key: &[u8]) -> Vec<u8> {
-            let mut payload = Vec::with_capacity(DID_CREATE_PREFIX.len() + public_key.len());
-            payload.extend_from_slice(DID_CREATE_PREFIX);
-            payload.extend_from_slice(public_key);
-            payload
         }
 
         pub fn get_did(did_id: Vec<u8>) -> Result<DidDetails, Error<T>> {
