@@ -1,0 +1,12 @@
+pub(crate) const DID_PREFIX: &[u8] = b"did:qsb:";
+pub(crate) const DID_MATERIAL_PREFIX: &[u8] = b"QSB_DID";
+pub(crate) const DID_CREATE_PREFIX: &[u8] = b"QSB_DID_CREATE";
+pub(crate) const DID_ADD_KEY_PREFIX: &[u8] = b"QSB_DID_ADD_KEY";
+pub(crate) const DID_REVOKE_KEY_PREFIX: &[u8] = b"QSB_DID_REVOKE_KEY";
+pub(crate) const DID_DEACTIVATE_PREFIX: &[u8] = b"QSB_DID_DEACTIVATE";
+pub(crate) const DID_ADD_SERVICE_PREFIX: &[u8] = b"QSB_DID_ADD_SERVICE";
+pub(crate) const DID_REMOVE_SERVICE_PREFIX: &[u8] = b"QSB_DID_REMOVE_SERVICE";
+pub(crate) const DID_SET_METADATA_PREFIX: &[u8] = b"QSB_DID_SET_METADATA";
+pub(crate) const DID_REMOVE_METADATA_PREFIX: &[u8] = b"QSB_DID_REMOVE_METADATA";
+pub(crate) const DID_ROTATE_KEY_PREFIX: &[u8] = b"QSB_DID_ROTATE_KEY";
+pub(crate) const DID_UPDATE_ROLES_PREFIX: &[u8] = b"QSB_DID_UPDATE_ROLES";

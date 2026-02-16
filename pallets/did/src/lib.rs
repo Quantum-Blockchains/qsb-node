@@ -2,73 +2,31 @@
 
 use frame_support::ensure;
 pub use pallet::*;
-use sp_core::mldsa44;
-use sp_std::vec::Vec;
+pub use types::*;
+
+mod auth;
+mod constants;
+mod did_utils;
+mod types;
+
+pub mod default_weights;
+
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
+#[cfg(test)]
+mod tests;
 
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
+    use crate::constants::*;
+    use crate::default_weights::WeightInfo;
     use frame_support::{dispatch::DispatchResult, pallet_prelude::*};
-    use frame_system::pallet_prelude::{BlockNumberFor, OriginFor};
-    use sp_io::{crypto::mldsa44_verify, hashing::blake2_256};
-    use sp_runtime::traits::Zero;
+    use frame_system::pallet_prelude::OriginFor;
+    use sp_core::mldsa44;
+    use sp_io::crypto::mldsa44_verify;
     use sp_std::vec;
-
-    const DID_PREFIX: &[u8] = b"did:qsb:";
-    const DID_MATERIAL_PREFIX: &[u8] = b"QSB_DID";
-    const DID_CREATE_PREFIX: &[u8] = b"QSB_DID_CREATE";
-    const DID_ADD_KEY_PREFIX: &[u8] = b"QSB_DID_ADD_KEY";
-    const DID_REVOKE_KEY_PREFIX: &[u8] = b"QSB_DID_REVOKE_KEY";
-    const DID_DEACTIVATE_PREFIX: &[u8] = b"QSB_DID_DEACTIVATE";
-    const DID_ADD_SERVICE_PREFIX: &[u8] = b"QSB_DID_ADD_SERVICE";
-    const DID_REMOVE_SERVICE_PREFIX: &[u8] = b"QSB_DID_REMOVE_SERVICE";
-    const DID_SET_METADATA_PREFIX: &[u8] = b"QSB_DID_SET_METADATA";
-    const DID_REMOVE_METADATA_PREFIX: &[u8] = b"QSB_DID_REMOVE_METADATA";
-    const DID_ROTATE_KEY_PREFIX: &[u8] = b"QSB_DID_ROTATE_KEY";
-    const DID_UPDATE_ROLES_PREFIX: &[u8] = b"QSB_DID_UPDATE_ROLES";
-
-    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-    pub enum KeyRole {
-        Authentication,
-        AssertionMethod,
-        KeyAgreement,
-        CapabilityInvocation,
-        CapabilityDelegation,
-    }
-
-    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-    pub struct DidKey {
-        pub public_key: Vec<u8>,
-        pub roles: Vec<KeyRole>,
-        pub revoked: bool,
-    }
-
-    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-    pub struct ServiceEndpoint {
-        pub id: Vec<u8>,
-        pub service_type: Vec<u8>,
-        pub endpoint: Vec<u8>,
-    }
-
-    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-    pub struct MetadataEntry {
-        pub key: Vec<u8>,
-        pub value: Vec<u8>,
-    }
-
-    #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-    #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-    pub struct DidDetails {
-        pub version: u64,
-        pub deactivated: bool,
-        pub keys: Vec<DidKey>,
-        pub services: Vec<ServiceEndpoint>,
-        pub metadata: Vec<MetadataEntry>,
-    }
+    use sp_std::vec::Vec;
 
     #[pallet::pallet]
     #[pallet::without_storage_info]
@@ -77,6 +35,7 @@ pub mod pallet {
     #[pallet::config]
     pub trait Config: frame_system::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
+        type WeightInfo: crate::default_weights::WeightInfo;
     }
 
     #[pallet::storage]
@@ -89,8 +48,12 @@ pub mod pallet {
         DidNotFound,
         DidDeactivated,
         KeyAlreadyExists,
+        AuthenticationKeyAlreadyExists,
         KeyNotFound,
         KeyAlreadyRevoked,
+        CannotRevokeLastAuthenticationKey,
+        CannotRemoveLastAuthenticationRole,
+        InvalidAuthenticationKeyCount,
         InvalidDidId,
         ServiceAlreadyExists,
         ServiceNotFound,
@@ -147,7 +110,7 @@ pub mod pallet {
     #[pallet::call]
     impl<T: Config> Pallet<T> {
         #[pallet::call_index(0)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::create_did())]
         pub fn create_did(
             origin: OriginFor<T>,
             public_key: Vec<u8>,
@@ -183,7 +146,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(1)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::add_key())]
         pub fn add_key(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -199,6 +162,7 @@ pub mod pallet {
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
+            let new_key_has_authentication = Self::roles_contain_authentication(&roles);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
@@ -207,12 +171,18 @@ pub mod pallet {
                     !details.keys.iter().any(|key| key.public_key == public_key),
                     Error::<T>::KeyAlreadyExists
                 );
+                ensure!(
+                    !new_key_has_authentication
+                        || Self::active_authentication_key_count(details) == 0,
+                    Error::<T>::AuthenticationKeyAlreadyExists
+                );
 
                 details.keys.push(DidKey {
                     public_key: public_key.clone(),
                     roles,
                     revoked: false,
                 });
+                Self::ensure_single_active_authentication_key(details)?;
                 details.version = details.version.saturating_add(1);
                 Ok(())
             })?;
@@ -222,7 +192,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(2)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::revoke_key())]
         pub fn revoke_key(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -241,14 +211,26 @@ pub mod pallet {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
                 ensure!(!details.deactivated, Error::<T>::DidDeactivated);
 
-                let key = details
+                let key_idx = details
                     .keys
-                    .iter_mut()
-                    .find(|key| key.public_key == public_key)
+                    .iter()
+                    .position(|key| key.public_key == public_key)
                     .ok_or(Error::<T>::KeyNotFound)?;
 
-                ensure!(!key.revoked, Error::<T>::KeyAlreadyRevoked);
-                key.revoked = true;
+                ensure!(
+                    !details.keys[key_idx].revoked,
+                    Error::<T>::KeyAlreadyRevoked
+                );
+                let is_authentication_key = Self::key_has_authentication(&details.keys[key_idx]);
+                if is_authentication_key {
+                    ensure!(
+                        Self::active_authentication_key_count(details) > 1,
+                        Error::<T>::CannotRevokeLastAuthenticationKey
+                    );
+                }
+
+                details.keys[key_idx].revoked = true;
+                Self::ensure_single_active_authentication_key(details)?;
                 details.version = details.version.saturating_add(1);
                 Ok(())
             })?;
@@ -258,7 +240,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(3)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::deactivate_did())]
         pub fn deactivate_did(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -284,7 +266,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(4)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::add_service())]
         pub fn add_service(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -317,7 +299,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(5)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::remove_service())]
         pub fn remove_service(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -350,7 +332,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(6)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::set_metadata())]
         pub fn set_metadata(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -387,7 +369,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(7)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::remove_metadata())]
         pub fn remove_metadata(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -420,7 +402,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(8)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::rotate_key())]
         pub fn rotate_key(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -438,6 +420,7 @@ pub mod pallet {
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
+            let new_key_has_authentication = Self::roles_contain_authentication(&roles);
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
@@ -449,20 +432,40 @@ pub mod pallet {
                         .any(|key| key.public_key == new_public_key),
                     Error::<T>::KeyAlreadyExists
                 );
-
-                let key = details
+                let key_idx = details
                     .keys
-                    .iter_mut()
-                    .find(|key| key.public_key == old_public_key)
+                    .iter()
+                    .position(|key| key.public_key == old_public_key)
                     .ok_or(Error::<T>::KeyNotFound)?;
-                ensure!(!key.revoked, Error::<T>::KeyAlreadyRevoked);
-                key.revoked = true;
+                ensure!(
+                    !details.keys[key_idx].revoked,
+                    Error::<T>::KeyAlreadyRevoked
+                );
+
+                let old_key_has_authentication =
+                    Self::key_has_authentication(&details.keys[key_idx]);
+                let active_authentication_count = Self::active_authentication_key_count(details);
+
+                if old_key_has_authentication {
+                    ensure!(
+                        new_key_has_authentication,
+                        Error::<T>::CannotRevokeLastAuthenticationKey
+                    );
+                } else if new_key_has_authentication {
+                    ensure!(
+                        active_authentication_count == 0,
+                        Error::<T>::AuthenticationKeyAlreadyExists
+                    );
+                }
+
+                details.keys[key_idx].revoked = true;
 
                 details.keys.push(DidKey {
                     public_key: new_public_key.clone(),
                     roles,
                     revoked: false,
                 });
+                Self::ensure_single_active_authentication_key(details)?;
                 details.version = details.version.saturating_add(1);
                 Ok(())
             })?;
@@ -476,7 +479,7 @@ pub mod pallet {
         }
 
         #[pallet::call_index(9)]
-        #[pallet::weight({0})]
+        #[pallet::weight(T::WeightInfo::update_roles())]
         pub fn update_roles(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
@@ -496,13 +499,35 @@ pub mod pallet {
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
                 ensure!(!details.deactivated, Error::<T>::DidDeactivated);
-                let key = details
+                let key_idx = details
                     .keys
-                    .iter_mut()
-                    .find(|key| key.public_key == public_key)
+                    .iter()
+                    .position(|key| key.public_key == public_key)
                     .ok_or(Error::<T>::KeyNotFound)?;
-                ensure!(!key.revoked, Error::<T>::KeyAlreadyRevoked);
-                key.roles = roles;
+                ensure!(
+                    !details.keys[key_idx].revoked,
+                    Error::<T>::KeyAlreadyRevoked
+                );
+
+                let old_has_authentication = Self::key_has_authentication(&details.keys[key_idx]);
+                let new_has_authentication = Self::roles_contain_authentication(&roles);
+                let active_authentication_count = Self::active_authentication_key_count(details);
+
+                if old_has_authentication && !new_has_authentication {
+                    ensure!(
+                        active_authentication_count > 1,
+                        Error::<T>::CannotRemoveLastAuthenticationRole
+                    );
+                }
+                if !old_has_authentication && new_has_authentication {
+                    ensure!(
+                        active_authentication_count == 0,
+                        Error::<T>::AuthenticationKeyAlreadyExists
+                    );
+                }
+
+                details.keys[key_idx].roles = roles;
+                Self::ensure_single_active_authentication_key(details)?;
                 details.version = details.version.saturating_add(1);
                 Ok(())
             })?;
@@ -536,10 +561,15 @@ pub mod pallet {
             payload: &[u8],
         ) -> Result<(), Error<T>> {
             let details = DidRecords::<T>::get(did_id).ok_or(Error::<T>::DidNotFound)?;
+            Self::ensure_single_active_authentication_key(&details)?;
             let sig = mldsa44::Signature::try_from(did_signature)
                 .map_err(|_| Error::<T>::InvalidDidSignature)?;
 
-            for key in details.keys.iter().filter(|key| !key.revoked) {
+            for key in details
+                .keys
+                .iter()
+                .filter(|key| !key.revoked && Self::key_has_authentication(key))
+            {
                 if let Ok(pk) = mldsa44::Public::try_from(key.public_key.as_slice()) {
                     if mldsa44_verify(&sig, payload, &pk) {
                         return Ok(());
@@ -551,36 +581,31 @@ pub mod pallet {
         }
 
         fn did_id_from_public_key(public_key: &[u8]) -> [u8; 32] {
-            let genesis = frame_system::Pallet::<T>::block_hash(BlockNumberFor::<T>::zero());
-            let mut material = Vec::with_capacity(
-                DID_MATERIAL_PREFIX.len() + genesis.as_ref().len() + public_key.len(),
-            );
-            material.extend_from_slice(DID_MATERIAL_PREFIX);
-            material.extend_from_slice(genesis.as_ref());
-            material.extend_from_slice(public_key);
-            blake2_256(&material)
+            crate::did_utils::did_id_from_public_key::<T>(public_key)
         }
 
         fn did_string_from_did_id(did_id: &[u8; 32]) -> Vec<u8> {
-            let did_id_b58 = bs58::encode(did_id).into_string();
-            let mut did = Vec::with_capacity(DID_PREFIX.len() + did_id_b58.len());
-            did.extend_from_slice(DID_PREFIX);
-            did.extend_from_slice(did_id_b58.as_bytes());
-            did
+            crate::did_utils::did_string_from_did_id(did_id)
         }
 
         fn decode_did_id(input: &[u8]) -> Result<[u8; 32], Error<T>> {
-            let did_id_bytes = if input.starts_with(DID_PREFIX) {
-                &input[DID_PREFIX.len()..]
-            } else {
-                input
-            };
+            crate::did_utils::decode_did_id::<T>(input)
+        }
 
-            let decoded = bs58::decode(did_id_bytes)
-                .into_vec()
-                .map_err(|_| Error::<T>::InvalidDidId)?;
-            let did_id: [u8; 32] = decoded.try_into().map_err(|_| Error::<T>::InvalidDidId)?;
-            Ok(did_id)
+        fn roles_contain_authentication(roles: &[KeyRole]) -> bool {
+            crate::auth::roles_contain_authentication(roles)
+        }
+
+        fn key_has_authentication(key: &DidKey) -> bool {
+            crate::auth::key_has_authentication(key)
+        }
+
+        fn active_authentication_key_count(details: &DidDetails) -> usize {
+            crate::auth::active_authentication_key_count(details)
+        }
+
+        fn ensure_single_active_authentication_key(details: &DidDetails) -> Result<(), Error<T>> {
+            crate::auth::ensure_single_active_authentication_key::<T>(details)
         }
 
         pub fn get_did(did_id: Vec<u8>) -> Result<DidDetails, Error<T>> {
