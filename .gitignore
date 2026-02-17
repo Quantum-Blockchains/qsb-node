@@ -1,3 +1,5 @@
 target/
 .vscode/
 data/
+docs/did_pl.md
+docs/did_test.md

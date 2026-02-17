@@ -1,5 +1,22 @@
 # DID Pallet (`pallets/did`)
 
+## Table of contents
+
+1. [Pallet purpose](#1-pallet-purpose)
+2. [Scope and source file](#2-scope-and-source-file)
+3. [Data model](#3-data-model)
+4. [Storage](#4-storage)
+5. [Conventions and constants](#5-conventions-and-constants)
+6. [DID ID input format and decoding](#6-did-id-input-format-and-decoding)
+7. [Signatures and verification](#7-signatures-and-verification)
+8. [Extrinsics (calls)](#8-extrinsics-calls)
+9. [Public helper API](#9-public-helper-api)
+10. [Events](#10-events)
+11. [Errors (`Error<T>`)](#11-errors-errort)
+12. [Security behavior and current limitations](#12-security-behavior-and-current-limitations)
+13. [Example flow](#13-example-flow)
+14. [Suggested future improvements (optional)](#14-suggested-future-improvements-optional)
+
 ## 1. Pallet purpose
 
 This pallet stores and manages DID (Decentralized Identifier) documents on-chain.
@@ -489,18 +506,18 @@ Event:
 
 ## 10. Events
 
-List of events emitted by the pallet:
+Events are emitted only after a successful state mutation.
 
-- `DidCreated { did }`
-- `KeyAdded { did, public_key }`
-- `KeyRevoked { did, public_key }`
-- `DidDeactivated { did }`
-- `KeyRotated { did, old_public_key, new_public_key }`
-- `RolesUpdated { did, public_key }`
-- `ServiceAdded { did, service_id }`
-- `ServiceRemoved { did, service_id }`
-- `MetadataSet { did, key }`
-- `MetadataRemoved { did, key }`
+- `DidCreated(did)` - confirms DID creation and returns canonical DID string.
+- `KeyAdded(did, public_key)` - indicates a new key was added to the DID document.
+- `KeyRevoked(did, public_key)` - indicates a DID key was revoked.
+- `DidDeactivated(did)` - confirms DID deactivation.
+- `KeyRotated(did, old_public_key, new_public_key)` - records key rotation (old key revoked, new key added).
+- `RolesUpdated(did, public_key)` - indicates role set update for a key.
+- `ServiceAdded(did, service_id)` - indicates a service endpoint was added.
+- `ServiceRemoved(did, service_id)` - indicates a service endpoint was removed.
+- `MetadataSet(did, key)` - confirms metadata insert/update for a key.
+- `MetadataRemoved(did, key)` - confirms metadata removal for a key.
 
 ## 11. Errors (`Error<T>`)
 

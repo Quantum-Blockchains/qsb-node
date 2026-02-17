@@ -1,95 +1,147 @@
 # Quantum Secured Blockchain (QSB)
 
-This is a repository for Quantum Secured Blockchain, an implementation of a quantum node using quantum 
-and post-quantum security. It is a fork of a rust-based repository, [Substrate](https://github.com/paritytech/substrate).
+This repository contains Quantum Secured Blockchain (QSB), a Substrate-based node implementation focused on quantum and post-quantum security.
 
 ## Table of contents
-- [1. Setup](#1-setup)
-  - [1.1. Prerequisites](#11-prerequisites)
-- [2. Build](#2-build)
-  - [2.1. Using `cargo`](#21-using-cargo)
-  - [2.2. Using Docker](#22-using-docker)
-- [3. Running](#3-running)
-- [4. Testing](#4-testing)
-  - [4.1 Rust unit tests](#41-rust-unit-tests)
-- [5. Documentation](#5-documentation)
-- [6. The whitepaper](#6-the-whitepaper)
+- [1. Quick Start](#1-quick-start)
+- [2. Setup](#2-setup)
+  - [2.1. Prerequisites](#21-prerequisites)
+- [3. Build](#3-build)
+  - [3.1. Using `cargo`](#31-using-cargo)
+  - [3.2. Using Docker](#32-using-docker)
+- [4. Running](#4-running)
+- [5. Testing](#5-testing)
+  - [5.1. Full workspace tests](#51-full-workspace-tests)
+  - [5.2. DID pallet tests only](#52-did-pallet-tests-only)
+  - [5.3. Benchmarking and weight generation](#53-benchmarking-and-weight-generation)
+- [6. Documentation](#6-documentation)
+- [7. Whitepaper](#7-whitepaper)
 
-## 1. Setup
-### 1.1. Prerequisites 
-To begin working with this repository you will need the following dependencies:
-- [Rust](https://www.rust-lang.org/tools/install)
-- Rust toolchain pinned via `rust-toolchain.toml` (required: `1.75.0`)
-- [Docker](https://docs.docker.com/engine/install/) (optional)
-- QKD-simulator
-- Certificate for QKD-simulator
+## 1. Quick Start
 
-After downloading your dependencies you need to make sure to continue with these steps:
-- Because this is a Substrate fork you will also need to configure Rust with a few additional steps, listed [here](https://docs.substrate.io/install/)
-by substrate team.
-
-## 2. Build
-There are few ways to build this repository before running, listed below.
-
-### 2.1. Using `cargo` 
-Cargo is a tool provided by Rust to easily manage building, running and testing Rust code.
-You can use it to build quantum node code with command:
+1. Install dependencies from [Setup](#2-setup).
+2. Build the node:
 ```bash
 cargo build --release
 ```
-This will create a binary file in `./target/release`, called `qsb-node`.
+3. Start PQKD service/simulator and make sure it is reachable (for example `http://localhost:8182/`).
+4. Run the node:
+```bash
+./target/release/qsb-node \
+  --sae-id <SAE_ID> \
+  --addr-pqkd <URL>
+```
+5. Run tests:
+```bash
+cargo test -p did --lib
+```
 
-### 2.2. Using Docker
-Alternate way of building this repository uses Docker. To build a node use command:
+## 2. Setup
 
+### 2.1. Prerequisites
+
+To work with this repository, install:
+- [Rust](https://www.rust-lang.org/tools/install)
+- Rust toolchain pinned via `rust-toolchain.toml` (required: `1.75.0`)
+- [Docker](https://docs.docker.com/engine/install/) (optional)
+- PQKD/QKD simulator (available from Quantum Blockchains: https://www.quantumblockchains.io/pqkd/)
+- Certificate required by your PQKD simulator setup
+
+Because this project is based on Substrate, complete the additional Substrate environment setup as described here:
+- https://docs.substrate.io/install/
+
+## 3. Build
+
+You can build the project in two ways.
+
+### 3.1. Using `cargo`
+
+```bash
+cargo build --release
+```
+This produces the `qsb-node` binary in `./target/release`.
+
+### 3.2. Using Docker
+
+Build a Docker image:
 ```bash
 docker build -t qsb-node .
 ```
-This will create a `qsb-node` docker image.
+This creates the `qsb-node` image.
 
-## 3. Running
+## 4. Running
 
+Using built binary:
 ```bash
-qsb-node 
+./target/release/qsb-node \
   --sae-id <SAE_ID>
   --addr-pqkd <URL>
 ```
 
-- **sae-id** - identifier of the SAE (node) used by the PQKD service;
-- **addr-pqkd** - base URL of the PQKD service (e.g. `http://localhost:8182/`);
+Using Cargo:
+```bash
+cargo run --release --bin qsb-node -- \
+  --sae-id <SAE_ID> \
+  --addr-pqkd <URL>
+```
 
-You can also pass any other Substrate-supported CLI arguments when starting the node (e.g. `--base-path`, `--chain`, `--port`, `--ws-port`, `--rpc-port`, `--name`).
+- `sae-id`: identifier of the SAE (node) used by the PQKD service
+- `addr-pqkd`: base URL of the PQKD service (for example `http://localhost:8182/`)
 
-## 4. Testing
-Currently covered:
-- QSB code (Rust unit tests)
+You can also pass standard Substrate CLI options (for example `--base-path`, `--chain`, `--port`, `--ws-port`, `--rpc-port`, `--name`).
 
-### 4.1 Rust unit tests
-To run QSB unit tests:
+## 5. Testing
+
+Current automated coverage in this repository is focused on Rust unit tests (including pallet behavior tests on mock runtime).
+
+### 5.1. Full workspace tests
+
 ```bash
 cargo test
 ```
 
-## 5. Documentation
-To generate documentation run:
+### 5.2. DID pallet tests only
+
+```bash
+cargo test -p did --lib
+```
+
+### 5.3. Benchmarking and weight generation
+
+Runtime benchmarks are used to generate pallet weights (for example `pallets/did/src/default_weights.rs`).
+
+Example command:
+```bash
+target/release/qsb-node benchmark pallet \
+  --chain dev \
+  --pallet did \
+  --extrinsic '*' \
+  --steps 20 \
+  --repeat 10 \
+  --output pallets/did/src/default_weights.rs
+```
+
+## 6. Documentation
+
+Generate Rust docs:
 ```bash
 cargo doc
 ```
 
-## 6. The whitepaper
-[QSB Whitepaper](https://www.quantumblockchains.io/wp-content/uploads/2023/06/QBCK_WhitePaper.pdf)
+Open docs for a crate (examples):
 
-In order to display documentation go to `target/doc/<crate you want to see>` and open `index.html` file in the browser that you want to, e.g.
-#### MAC
-
+macOS:
 ```bash
 cd target/doc/qsb_node
 open -a "Google Chrome" index.html
 ```
 
-#### Linux
-
+Linux:
 ```bash
 cd target/doc/qsb_node
 firefox index.html
 ```
+
+## 7. Whitepaper
+
+[QSB Whitepaper](https://www.quantumblockchains.io/wp-content/uploads/2023/06/QBCK_WhitePaper.pdf)
