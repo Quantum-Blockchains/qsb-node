@@ -1,0 +1,93 @@
+{
+  "$id": "https://schemas.qsb.example/kyc-basic-v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QSB KYC Basic Credential",
+  "description": "Minimal KYC credential schema for natural person identity checks.",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "issuer",
+    "issuanceDate",
+    "credentialSubject"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uri"
+    },
+    "type": {
+      "type": "array",
+      "items": { "type": "string" },
+      "contains": { "const": "VerifiableCredential" }
+    },
+    "issuer": {
+      "oneOf": [
+        { "type": "string", "format": "uri" },
+        {
+          "type": "object",
+          "required": ["id"],
+          "properties": {
+            "id": { "type": "string", "format": "uri" }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "issuanceDate": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expirationDate": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "credentialSubject": {
+      "type": "object",
+      "required": [
+        "id",
+        "firstName",
+        "lastName",
+        "dateOfBirth",
+        "countryCode",
+        "kycLevel"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uri"
+        },
+        "firstName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "lastName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "format": "date"
+        },
+        "countryCode": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}$"
+        },
+        "kycLevel": {
+          "type": "string",
+          "enum": ["basic", "enhanced"]
+        },
+        "sanctionsScreened": {
+          "type": "boolean"
+        },
+        "pepScreened": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

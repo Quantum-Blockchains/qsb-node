@@ -44,6 +44,8 @@ pub use frame_support::{
 };
 pub use frame_system::Call as SystemCall;
 pub use pallet_balances::Call as BalancesCall;
+#[cfg(feature = "runtime-benchmarks")]
+use pallet_contracts::NoopMigration;
 pub use pallet_timestamp::Call as TimestampCall;
 use pallet_transaction_payment::{ConstFeeMultiplier, CurrencyAdapter, Multiplier};
 #[cfg(any(feature = "std", test))]
@@ -392,6 +394,7 @@ where
 
 impl did::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
+    type WeightInfo = did::default_weights::DefaultWeightInfo<Runtime>;
 }
 
 impl schema::Config for Runtime {
@@ -468,9 +471,9 @@ mod benches {
         [frame_benchmarking, BaselineBench::<Runtime>]
         [frame_system, SystemBench::<Runtime>]
         [pallet_balances, Balances]
+        [did, Did]
         [pallet_timestamp, Timestamp]
         [pallet_sudo, Sudo]
-        [pallet_template, TemplateModule]
     );
 }
 

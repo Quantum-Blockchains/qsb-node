@@ -10,8 +10,8 @@ repository = "https://github.com/Quantum-Blockchains/quantum-metachain"
 
 [dependencies]
 codec = { package = "parity-scale-codec", version = "3.6.1", default-features = false }
-sp-api = { version = "4.0.0-dev", default-features = false, git = "https://github.com/Quantum-Blockchains/substrate.git", branch = "qmc-v0.0.3" }
-sp-std = { version = "8.0.0", default-features = false, git = "https://github.com/Quantum-Blockchains/substrate.git", branch = "qmc-v0.0.3" }
+sp-api = { version = "4.0.0-dev", default-features = false, git = "https://github.com/Quantum-Blockchains/substrate.git", branch = "qsb-v0.0.1" }
+sp-std = { version = "8.0.0", default-features = false, git = "https://github.com/Quantum-Blockchains/substrate.git", branch = "qsb-v0.0.1" }
 did = { path = "../did", default-features = false }
 
 [features]
