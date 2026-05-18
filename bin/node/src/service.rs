@@ -10,7 +10,7 @@ pub use sc_executor::NativeElseWasmExecutor;
 use sc_service::{error::Error as ServiceError, Configuration, TaskManager, WarpSyncParams};
 use sc_telemetry::{Telemetry, TelemetryWorker};
 use sc_transaction_pool_api::OffchainTransactionPoolFactory;
-use sp_consensus_aura::sr25519::AuthorityPair as AuraPair;
+use sp_consensus_aura::mldsa44::AuthorityPair as AuraPair;
 use sp_runtime::offchain::{OffchainStorage, STORAGE_PREFIX};
 use std::{sync::Arc, time::Duration};
 
@@ -228,12 +228,6 @@ pub fn new_full(config: Configuration) -> Result<TaskManager, ServiceError> {
             };
             crate::rpc::create_full(deps).map_err(Into::into)
         })
-    };
-
-    let qrng = &config.network.pqkd.addr_qrng;
-    let tmp = qrng.encode();
-    if let Some(mut storage) = backend.offchain_storage() {
-        storage.set(STORAGE_PREFIX, b"qrng-api-url", &tmp);
     };
 
     //     let rpc_address = config.rpc_port.unwrap();
