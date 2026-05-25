@@ -7,6 +7,7 @@ pub use types::*;
 mod auth;
 mod constants;
 mod did_utils;
+mod resolver;
 mod types;
 
 pub mod default_weights;
@@ -61,6 +62,9 @@ pub mod pallet {
         InvalidSignature,
         InvalidPublicKey,
         InvalidDidSignature,
+        InvalidController,
+        KeyIdAlreadyExists,
+        InvalidKeyIdSuffix,
     }
 
     #[pallet::event]
@@ -127,20 +131,28 @@ pub mod pallet {
             payload.extend_from_slice(&public_key.encode());
             Self::verify_signature_with_public_key(&did_signature, &payload, &public_key)?;
 
+            let did = Self::did_string_from_did_id(&did_id);
+
+            let mut key_id = did.to_vec();
+            key_id.extend_from_slice(b"#update");
+
             let details = DidDetails {
                 version: 0,
                 deactivated: false,
                 keys: vec![DidKey {
+                    key_id,
+                    vm_type: VerificationMethodType::Multikey,
                     public_key,
                     roles: vec![KeyRole::Authentication],
                     revoked: false,
+                    controller: None,
                 }],
                 services: Vec::new(),
                 metadata: Vec::new(),
+                next_key_index: 2,
             };
 
             DidRecords::<T>::insert(did_id, details);
-            let did = Self::did_string_from_did_id(&did_id);
             Self::deposit_event(Event::DidCreated { did });
             Ok(())
         }
@@ -150,17 +162,25 @@ pub mod pallet {
         pub fn add_key(
             origin: OriginFor<T>,
             did_id: Vec<u8>,
+            key_id_suffix: Option<Vec<u8>>,
+            vm_type: VerificationMethodType,
             public_key: Vec<u8>,
             roles: Vec<KeyRole>,
+            controller: Option<Vec<u8>>,
             did_signature: Vec<u8>,
         ) -> DispatchResult {
             let _ = frame_system::ensure_signed(origin)?;
             let mut payload = DID_ADD_KEY_PREFIX.to_vec();
             payload.extend_from_slice(&did_id.encode());
+            payload.extend_from_slice(&key_id_suffix.encode());
+            payload.extend_from_slice(&vm_type.encode());
             payload.extend_from_slice(&public_key.encode());
             payload.extend_from_slice(&roles.encode());
+            payload.extend_from_slice(&controller.encode());
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
+            Self::validate_public_key(&public_key)?;
+            Self::validate_controller_for_did(did_id, &controller)?;
             let did = Self::did_string_from_did_id(&did_id);
             let new_key_has_authentication = Self::roles_contain_authentication(&roles);
 
@@ -177,9 +197,14 @@ pub mod pallet {
                     Error::<T>::AuthenticationKeyAlreadyExists
                 );
 
+                let key_id = Self::resolve_unique_key_id(details, &did, key_id_suffix)?;
+
                 details.keys.push(DidKey {
+                    key_id,
+                    vm_type,
                     public_key: public_key.clone(),
                     roles,
+                    controller,
                     revoked: false,
                 });
                 Self::ensure_single_active_authentication_key(details)?;
@@ -408,6 +433,9 @@ pub mod pallet {
             did_id: Vec<u8>,
             old_public_key: Vec<u8>,
             new_public_key: Vec<u8>,
+            new_key_id_suffix: Option<Vec<u8>>,
+            new_vm_type: VerificationMethodType,
+            new_controller: Option<Vec<u8>>,
             roles: Vec<KeyRole>,
             did_signature: Vec<u8>,
         ) -> DispatchResult {
@@ -416,9 +444,14 @@ pub mod pallet {
             payload.extend_from_slice(&did_id.encode());
             payload.extend_from_slice(&old_public_key.encode());
             payload.extend_from_slice(&new_public_key.encode());
+            payload.extend_from_slice(&new_key_id_suffix.encode());
+            payload.extend_from_slice(&new_vm_type.encode());
+            payload.extend_from_slice(&new_controller.encode());
             payload.extend_from_slice(&roles.encode());
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
+            Self::validate_public_key(&new_public_key)?;
+            Self::validate_controller_for_did(did_id, &new_controller)?;
             let did = Self::did_string_from_did_id(&did_id);
             let new_key_has_authentication = Self::roles_contain_authentication(&roles);
 
@@ -458,11 +491,16 @@ pub mod pallet {
                     );
                 }
 
+                let key_id = Self::resolve_unique_key_id(details, &did, new_key_id_suffix)?;
+                
                 details.keys[key_idx].revoked = true;
 
                 details.keys.push(DidKey {
+                    key_id,
+                    vm_type: new_vm_type,
                     public_key: new_public_key.clone(),
                     roles,
+                    controller: new_controller,
                     revoked: false,
                 });
                 Self::ensure_single_active_authentication_key(details)?;
@@ -538,6 +576,102 @@ pub mod pallet {
     }
 
     impl<T: Config> Pallet<T> {
+        fn key_id_exists(details: &DidDetails, key_id: &[u8]) -> bool {
+            details.keys.iter().any(|key| key.key_id == key_id)
+        }
+
+        fn build_full_key_id(did: &[u8], key_suffix: &[u8]) -> Vec<u8> {
+            let mut key_id = did.to_vec();
+            key_id.extend_from_slice(key_suffix);
+            key_id
+        }
+
+        fn resolve_unique_key_id(
+            details: &mut DidDetails,
+            did: &[u8],
+            requested_key_id_suffix: Option<Vec<u8>>,
+        ) -> Result<Vec<u8>, Error<T>> {
+            if let Some(id_suffix) = requested_key_id_suffix {
+                ensure!(
+                    !id_suffix.starts_with(b"did:"),
+                    Error::<T>::InvalidKeyIdSuffix
+                );
+
+                let normalized_suffix = if id_suffix.starts_with(b"#") {
+                    id_suffix
+                } else {
+                    let mut prefixed = b"#".to_vec();
+                    prefixed.extend_from_slice(&id_suffix);
+                    prefixed
+                };
+                ensure!(
+                    normalized_suffix.len() > 1,
+                    Error::<T>::InvalidKeyIdSuffix
+                );
+
+                let full_key_id = Self::build_full_key_id(did, &normalized_suffix);
+                ensure!(
+                    !Self::key_id_exists(details, &full_key_id),
+                    Error::<T>::KeyIdAlreadyExists
+                );
+                return Ok(full_key_id);
+            }
+
+            loop {
+                let suffix = Self::key_suffix_from_index(details.next_key_index);
+                let full_key_id = Self::build_full_key_id(did, &suffix);
+
+                if !Self::key_id_exists(details, &full_key_id) {
+                    details.next_key_index = details.next_key_index.saturating_add(1);
+                    return Ok(full_key_id);
+                }
+
+                details.next_key_index = details.next_key_index.saturating_add(1);
+            }
+        }
+
+        fn key_suffix_from_index(index: u32) -> Vec<u8> {
+            let mut out = b"#key-".to_vec();
+
+            if index == 0 {
+                out.push(b'0');
+                return out;
+            }
+
+            let mut digits = [0u8; 10];
+            let mut n = index;
+            let mut i = 0usize;
+            while n > 0 {
+                digits[i] = (n % 10) as u8;
+                n /= 10;
+                i += 1;
+            }
+
+            while i > 0 {
+                i -= 1;
+                out.push(b'0' + digits[i]);
+            }
+
+            out
+        }
+
+        fn validate_public_key(public_key: &[u8]) -> Result<(), Error<T>> {
+            let _ = mldsa44::Public::try_from(public_key).map_err(|_| Error::<T>::InvalidPublicKey)?;
+            Ok(())
+        }
+
+        fn validate_controller_for_did(
+            did_id: [u8; 32],
+            controller: &Option<Vec<u8>>,
+        ) -> Result<(), Error<T>> {
+            if let Some(controller_did) = controller {
+                let controller_id =
+                    Self::decode_did_id(controller_did).map_err(|_| Error::<T>::InvalidController)?;
+                ensure!(controller_id == did_id, Error::<T>::InvalidController);
+            }
+            Ok(())
+        }
+
         fn verify_signature_with_public_key(
             did_signature: &[u8],
             payload: &[u8],
@@ -606,6 +740,10 @@ pub mod pallet {
 
         fn ensure_single_active_authentication_key(details: &DidDetails) -> Result<(), Error<T>> {
             crate::auth::ensure_single_active_authentication_key::<T>(details)
+        }
+
+        pub fn resolve_did(did_input: Vec<u8>) -> DidResolutionResult {
+            crate::resolver::resolve_did::<T>(did_input)
         }
 
         pub fn get_did(did_id: Vec<u8>) -> Result<DidDetails, Error<T>> {

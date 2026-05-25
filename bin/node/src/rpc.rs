@@ -21,6 +21,9 @@ pub use sc_rpc_api::DenyUnsafe;
 pub trait DidApi {
     #[method(name = "did_getByString")]
     fn did_by_string(&self, did: String) -> RpcResult<Option<did::DidDetails>>;
+
+    #[method(name = "did_getDocumentByString")]
+    fn did_document_by_string(&self, did: String) -> RpcResult<did::DidResolutionResult>;
 }
 
 pub struct DidRpc<C> {
@@ -42,6 +45,13 @@ where
         let api = self.client.runtime_api();
         let at = self.client.info().best_hash;
         api.did_by_string(at, did.into_bytes())
+            .map_err(|e| jsonrpsee::core::Error::Custom(format!("Runtime API error: {:?}", e)))
+    }
+
+    fn did_document_by_string(&self, did: String) -> RpcResult<did::DidResolutionResult> {
+        let api = self.client.runtime_api();
+        let at = self.client.info().best_hash;
+        api.did_document_by_string(at, did.into_bytes())
             .map_err(|e| jsonrpsee::core::Error::Custom(format!("Runtime API error: {:?}", e)))
     }
 }

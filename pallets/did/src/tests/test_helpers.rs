@@ -1,5 +1,5 @@
 use super::mock_runtime::{Did, RuntimeOrigin, System};
-use crate::{KeyRole, MetadataEntry};
+use crate::{KeyRole, MetadataEntry, VerificationMethodType};
 use codec::Encode;
 use frame_support::assert_ok;
 use sp_core::mldsa44;
@@ -66,13 +66,19 @@ pub(super) fn create_did(owner: u64, owner_pair: &mldsa44::Pair) -> ([u8; 32], V
 pub(super) fn add_key_signature(
     signer: &mldsa44::Pair,
     did_input: &[u8],
+    key_id_suffix: &Option<Vec<u8>>,
+    vm_type: VerificationMethodType,
     new_public_key: &[u8],
     roles: &[KeyRole],
+    controller: &Option<Vec<u8>>,
 ) -> Vec<u8> {
     let mut payload = DID_ADD_KEY_PREFIX.to_vec();
     payload.extend_from_slice(&did_input.to_vec().encode());
+    payload.extend_from_slice(&key_id_suffix.encode());
+    payload.extend_from_slice(&vm_type.encode());
     payload.extend_from_slice(&new_public_key.to_vec().encode());
     payload.extend_from_slice(&roles.to_vec().encode());
+    payload.extend_from_slice(&controller.encode());
     sign(signer, &payload)
 }
 
@@ -92,12 +98,18 @@ pub(super) fn rotate_key_signature(
     did_input: &[u8],
     old_public_key: &[u8],
     new_public_key: &[u8],
+    new_key_id_suffix: &Option<Vec<u8>>,
+    new_vm_type: VerificationMethodType,
+    new_controller: &Option<Vec<u8>>,
     roles: &[KeyRole],
 ) -> Vec<u8> {
     let mut payload = DID_ROTATE_KEY_PREFIX.to_vec();
     payload.extend_from_slice(&did_input.to_vec().encode());
     payload.extend_from_slice(&old_public_key.to_vec().encode());
     payload.extend_from_slice(&new_public_key.to_vec().encode());
+    payload.extend_from_slice(&new_key_id_suffix.encode());
+    payload.extend_from_slice(&new_vm_type.encode());
+    payload.extend_from_slice(&new_controller.encode());
     payload.extend_from_slice(&roles.to_vec().encode());
     sign(signer, &payload)
 }

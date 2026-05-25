@@ -1,6 +1,6 @@
 use super::mock_runtime::{new_test_ext, Did, RuntimeEvent, RuntimeOrigin, System, Test};
 use super::test_helpers::*;
-use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry};
+use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry, VerificationMethodType};
 use frame_support::{assert_noop, assert_ok};
 
 #[test]
@@ -27,14 +27,27 @@ fn add_key_rejects_second_active_authentication_key() {
         let second_pair = keypair(2);
         let second_pk = public_key(&second_pair);
         let roles = vec![KeyRole::Authentication];
-        let did_signature = add_key_signature(&owner_pair, &did_input, &second_pk, &roles);
+        let key_id_suffix = None;
+        let controller = None;
+        let did_signature = add_key_signature(
+            &owner_pair,
+            &did_input,
+            &key_id_suffix,
+            VerificationMethodType::Multikey,
+            &second_pk,
+            &roles,
+            &controller,
+        );
 
         assert_noop!(
             Did::add_key(
                 RuntimeOrigin::signed(1),
                 did_input,
+                key_id_suffix,
+                VerificationMethodType::Multikey,
                 second_pk,
                 roles,
+                controller,
                 did_signature
             ),
             Error::<Test>::AuthenticationKeyAlreadyExists
@@ -85,8 +98,18 @@ fn rotate_key_requires_authentication_when_rotating_auth_key() {
         let new_pair = keypair(2);
         let new_pk = public_key(&new_pair);
         let new_roles = vec![KeyRole::AssertionMethod];
-        let did_signature =
-            rotate_key_signature(&owner_pair, &did_input, &owner_pk, &new_pk, &new_roles);
+        let new_key_id_suffix = None;
+        let new_controller = None;
+        let did_signature = rotate_key_signature(
+            &owner_pair,
+            &did_input,
+            &owner_pk,
+            &new_pk,
+            &new_key_id_suffix,
+            VerificationMethodType::Multikey,
+            &new_controller,
+            &new_roles,
+        );
 
         assert_noop!(
             Did::rotate_key(
@@ -94,6 +117,9 @@ fn rotate_key_requires_authentication_when_rotating_auth_key() {
                 did_input,
                 owner_pk,
                 new_pk,
+                new_key_id_suffix,
+                VerificationMethodType::Multikey,
+                new_controller,
                 new_roles,
                 did_signature
             ),
@@ -111,12 +137,25 @@ fn non_authentication_key_cannot_authorize_calls() {
         let aux_pair = keypair(2);
         let aux_pk = public_key(&aux_pair);
         let aux_roles = vec![KeyRole::AssertionMethod];
-        let add_sig = add_key_signature(&owner_pair, &did_input, &aux_pk, &aux_roles);
+        let key_id_suffix = None;
+        let controller = None;
+        let add_sig = add_key_signature(
+            &owner_pair,
+            &did_input,
+            &key_id_suffix,
+            VerificationMethodType::Multikey,
+            &aux_pk,
+            &aux_roles,
+            &controller,
+        );
         assert_ok!(Did::add_key(
             RuntimeOrigin::signed(1),
             did_input.clone(),
+            key_id_suffix,
+            VerificationMethodType::Multikey,
             aux_pk,
             aux_roles,
+            controller,
             add_sig
         ));
 
@@ -155,13 +194,26 @@ fn rotate_authentication_key_moves_authority_to_new_key() {
         let new_pair = keypair(2);
         let new_pk = public_key(&new_pair);
         let new_roles = vec![KeyRole::Authentication];
-        let rotate_sig =
-            rotate_key_signature(&owner_pair, &did_input, &owner_pk, &new_pk, &new_roles);
+        let new_key_id_suffix = None;
+        let new_controller = None;
+        let rotate_sig = rotate_key_signature(
+            &owner_pair,
+            &did_input,
+            &owner_pk,
+            &new_pk,
+            &new_key_id_suffix,
+            VerificationMethodType::Multikey,
+            &new_controller,
+            &new_roles,
+        );
         assert_ok!(Did::rotate_key(
             RuntimeOrigin::signed(1),
             did_input.clone(),
             owner_pk.clone(),
             new_pk.clone(),
+            new_key_id_suffix,
+            VerificationMethodType::Multikey,
+            new_controller,
             new_roles,
             rotate_sig
         ));
