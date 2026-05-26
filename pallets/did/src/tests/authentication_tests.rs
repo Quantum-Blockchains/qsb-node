@@ -14,7 +14,7 @@ fn create_did_creates_single_active_authentication_key() {
         assert_eq!(details.version, 0);
         assert_eq!(details.keys.len(), 1);
         assert_eq!(details.keys[0].public_key, owner_pk);
-        assert_eq!(details.keys[0].roles, vec![KeyRole::Authentication]);
+        assert_eq!(details.keys[0].roles, vec![KeyRole::CapabilityInvocation]);
         assert!(!details.keys[0].revoked);
     });
 }
@@ -208,7 +208,7 @@ fn rotate_authentication_key_moves_authority_to_new_key() {
         let new_pair = keypair(2);
         let new_pk = public_key(&new_pair);
         let new_multikey = multikey_from_raw_mldsa44(&new_pk);
-        let new_roles = vec![KeyRole::Authentication];
+        let new_roles = vec![KeyRole::CapabilityInvocation];
         let new_key_id_suffix = None;
         let new_controller = None;
         let rotate_sig = rotate_key_signature(
@@ -264,11 +264,51 @@ fn rotate_authentication_key_moves_authority_to_new_key() {
             details
                 .keys
                 .iter()
-                .filter(|k| !k.revoked && k.roles.contains(&KeyRole::Authentication))
+                .filter(|k| !k.revoked && k.key_id.ends_with(b"#update"))
                 .count(),
             1
         );
         assert_eq!(details.version, 2);
         assert!(DidRecords::<Test>::contains_key(did_id));
+    });
+}
+
+#[test]
+fn rotate_update_key_rejects_non_mldsa44_codec() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let mut owner_key_id = did_input.clone();
+        owner_key_id.extend_from_slice(b"#update");
+
+        let new_pair = keypair(2);
+        let new_pk = public_key(&new_pair);
+        let wrong_codec_multikey = multikey_from_codec_and_raw(0x122c, &new_pk);
+        let new_roles = vec![KeyRole::CapabilityInvocation];
+        let new_key_id_suffix = None;
+        let new_controller = None;
+        let rotate_sig = rotate_key_signature(
+            &owner_pair,
+            &did_input,
+            &owner_key_id,
+            &wrong_codec_multikey,
+            &new_key_id_suffix,
+            &new_controller,
+            &new_roles,
+        );
+
+        assert_noop!(
+            Did::rotate_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                owner_key_id,
+                wrong_codec_multikey,
+                new_key_id_suffix,
+                new_controller,
+                new_roles,
+                rotate_sig
+            ),
+            Error::<Test>::UnsupportedMultikeyCodec
+        );
     });
 }

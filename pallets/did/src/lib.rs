@@ -157,7 +157,7 @@ pub mod pallet {
                     key_id,
                     multicodec: Some(codec),
                     public_key: raw_public_key,
-                    roles: vec![KeyRole::Authentication],
+                    roles: vec![KeyRole::CapabilityInvocation],
                     revoked: false,
                     controller: None,
                 }],
@@ -491,6 +491,10 @@ pub mod pallet {
                 );
 
                 let key_id = if details.keys[key_idx].key_id == update_key_id {
+                    ensure!(
+                        new_codec == MULTICODEC_ML_DSA_44,
+                        Error::<T>::UnsupportedMultikeyCodec
+                    );
                     update_key_id.clone()
                 } else {
                     Self::resolve_unique_key_id(details, &did, new_key_id_suffix)?

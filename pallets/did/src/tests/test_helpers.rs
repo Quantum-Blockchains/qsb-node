@@ -31,7 +31,11 @@ pub(super) fn public_key(pair: &mldsa44::Pair) -> Vec<u8> {
 }
 
 pub(super) fn multikey_from_raw_mldsa44(raw_public_key: &[u8]) -> Vec<u8> {
-    let mut prefixed = encode_uvarint(MULTICODEC_ML_DSA_44);
+    multikey_from_codec_and_raw(MULTICODEC_ML_DSA_44, raw_public_key)
+}
+
+pub(super) fn multikey_from_codec_and_raw(codec: u64, raw_public_key: &[u8]) -> Vec<u8> {
+    let mut prefixed = encode_uvarint(codec);
     prefixed.extend_from_slice(raw_public_key);
     let encoded = URL_SAFE_NO_PAD.encode(prefixed);
     let mut out = Vec::with_capacity(encoded.len() + 1);
