@@ -1,41 +1,8 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use sp_std::vec::Vec;
 
-use crate::constants::MAX_JWK_PUBLIC_KEY_BYTES;
-use crate::VerificationMethodType;
-
 pub(crate) enum KeyValidationError {
-    InvalidPublicKey,
-    InvalidJwkSize,
     InvalidMultikey,
-}
-
-pub(crate) fn validate_key_material<F>(
-    vm_type: VerificationMethodType,
-    public_key: &[u8],
-    validate_raw_public_key: F,
-) -> Result<(), KeyValidationError>
-where
-    F: Fn(&[u8]) -> bool,
-{
-    match vm_type {
-        VerificationMethodType::Multikey => {
-            if validate_raw_public_key(public_key) {
-                Ok(())
-            } else {
-                Err(KeyValidationError::InvalidPublicKey)
-            }
-        }
-        VerificationMethodType::JsonWebKey2020 => {
-            if public_key.is_empty() {
-                return Err(KeyValidationError::InvalidPublicKey);
-            }
-            if public_key.len() > MAX_JWK_PUBLIC_KEY_BYTES {
-                return Err(KeyValidationError::InvalidJwkSize);
-            }
-            Ok(())
-        }
-    }
 }
 
 // Validates W3C Multikey lexical/encoding structure:

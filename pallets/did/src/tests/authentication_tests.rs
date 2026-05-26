@@ -1,6 +1,6 @@
 use super::mock_runtime::{new_test_ext, Did, RuntimeEvent, RuntimeOrigin, System, Test};
 use super::test_helpers::*;
-use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry, VerificationMethodType};
+use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry};
 use frame_support::{assert_noop, assert_ok};
 
 #[test]
@@ -34,7 +34,6 @@ fn add_key_allows_multiple_authentication_keys() {
             &owner_pair,
             &did_input,
             &key_id_suffix,
-            VerificationMethodType::Multikey,
             &second_multikey,
             &roles,
             &controller,
@@ -44,7 +43,6 @@ fn add_key_allows_multiple_authentication_keys() {
             RuntimeOrigin::signed(1),
             did_input,
             key_id_suffix,
-            VerificationMethodType::Multikey,
             second_multikey,
             roles,
             controller,
@@ -109,7 +107,6 @@ fn rotate_update_key_keeps_update_authority_even_without_auth_role() {
             &owner_key_id,
             &new_multikey,
             &new_key_id_suffix,
-            VerificationMethodType::Multikey,
             &new_controller,
             &new_roles,
         );
@@ -120,7 +117,6 @@ fn rotate_update_key_keeps_update_authority_even_without_auth_role() {
             owner_key_id,
             new_multikey,
             new_key_id_suffix,
-            VerificationMethodType::Multikey,
             new_controller,
             new_roles,
             did_signature
@@ -161,7 +157,6 @@ fn non_authentication_key_cannot_authorize_calls() {
             &owner_pair,
             &did_input,
             &key_id_suffix,
-            VerificationMethodType::Multikey,
             &aux_multikey,
             &aux_roles,
             &controller,
@@ -170,7 +165,6 @@ fn non_authentication_key_cannot_authorize_calls() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             key_id_suffix,
-            VerificationMethodType::Multikey,
             aux_multikey,
             aux_roles,
             controller,
@@ -223,7 +217,6 @@ fn rotate_authentication_key_moves_authority_to_new_key() {
             &owner_key_id,
             &new_multikey,
             &new_key_id_suffix,
-            VerificationMethodType::Multikey,
             &new_controller,
             &new_roles,
         );
@@ -233,7 +226,6 @@ fn rotate_authentication_key_moves_authority_to_new_key() {
             owner_key_id,
             new_multikey.clone(),
             new_key_id_suffix,
-            VerificationMethodType::Multikey,
             new_controller,
             new_roles,
             rotate_sig

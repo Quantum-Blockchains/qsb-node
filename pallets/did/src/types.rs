@@ -14,17 +14,9 @@ pub enum KeyRole {
 }
 
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
-#[derive(Clone, Copy, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
-pub enum VerificationMethodType {
-    Multikey,
-    JsonWebKey2020,
-}
-
-#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
 pub struct DidKey {
     pub key_id: Vec<u8>,
-    pub vm_type: VerificationMethodType,
     pub multicodec: Option<u64>,
     pub public_key: Vec<u8>,
     pub roles: Vec<KeyRole>,
@@ -69,8 +61,6 @@ pub struct DidVerificationMethod {
     pub controller: Vec<u8>,
     #[cfg_attr(feature = "std", serde(rename = "publicKeyMultibase"))]
     pub public_key_multibase: Option<Vec<u8>>,
-    #[cfg_attr(feature = "std", serde(rename = "publicKeyJwk"))]
-    pub public_key_jwk: Option<Vec<u8>>,
 }
 
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]

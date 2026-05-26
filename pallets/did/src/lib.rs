@@ -4,7 +4,6 @@ use frame_support::ensure;
 pub use pallet::*;
 pub use types::*;
 
-mod auth;
 mod constants;
 mod did_utils;
 mod key_validation;
@@ -68,7 +67,6 @@ pub mod pallet {
         InvalidKeyIdSuffix,
         InvalidServiceId,
         InvalidServiceEndpoint,
-        InvalidJwkSize,
         InvalidMultikey,
         UnsupportedMultikeyCodec,
     }
@@ -129,8 +127,6 @@ pub mod pallet {
             let _ = frame_system::ensure_signed(origin)?;
             let (codec, raw_public_key) = crate::key_validation::validate_multikey(&public_key)
                 .map_err(|err| match err {
-                    KeyValidationError::InvalidPublicKey => Error::<T>::InvalidPublicKey,
-                    KeyValidationError::InvalidJwkSize => Error::<T>::InvalidJwkSize,
                     KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
                 })?;
             ensure!(
@@ -159,7 +155,6 @@ pub mod pallet {
                 deactivated: false,
                 keys: vec![DidKey {
                     key_id,
-                    vm_type: VerificationMethodType::Multikey,
                     multicodec: Some(codec),
                     public_key: raw_public_key,
                     roles: vec![KeyRole::Authentication],
@@ -182,7 +177,6 @@ pub mod pallet {
             origin: OriginFor<T>,
             did_id: Vec<u8>,
             key_id_suffix: Option<Vec<u8>>,
-            vm_type: VerificationMethodType,
             public_key: Vec<u8>,
             roles: Vec<KeyRole>,
             controller: Option<Vec<u8>>,
@@ -192,24 +186,15 @@ pub mod pallet {
             let mut payload = DID_ADD_KEY_PREFIX.to_vec();
             payload.extend_from_slice(&did_id.encode());
             payload.extend_from_slice(&key_id_suffix.encode());
-            payload.extend_from_slice(&vm_type.encode());
             payload.extend_from_slice(&public_key.encode());
             payload.extend_from_slice(&roles.encode());
             payload.extend_from_slice(&controller.encode());
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
-            let (normalized_public_key, multicodec) = if vm_type == VerificationMethodType::Multikey {
-                let (codec, raw_key) =
-                    crate::key_validation::validate_multikey(&public_key).map_err(|err| match err {
-                        KeyValidationError::InvalidPublicKey => Error::<T>::InvalidPublicKey,
-                        KeyValidationError::InvalidJwkSize => Error::<T>::InvalidJwkSize,
-                        KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
-                    })?;
-                (raw_key, Some(codec))
-            } else {
-                Self::validate_key_material(vm_type, &public_key)?;
-                (public_key.clone(), None)
-            };
+            let (codec, normalized_public_key) =
+                crate::key_validation::validate_multikey(&public_key).map_err(|err| match err {
+                    KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
+                })?;
             Self::validate_controller_for_did(&controller)?;
             let did = Self::did_string_from_did_id(&did_id);
 
@@ -227,8 +212,7 @@ pub mod pallet {
 
                 details.keys.push(DidKey {
                     key_id,
-                    vm_type,
-                    multicodec,
+                    multicodec: Some(codec),
                     public_key: normalized_public_key.clone(),
                     roles,
                     controller,
@@ -461,7 +445,6 @@ pub mod pallet {
             old_key_id: Vec<u8>,
             new_public_key: Vec<u8>,
             new_key_id_suffix: Option<Vec<u8>>,
-            new_vm_type: VerificationMethodType,
             new_controller: Option<Vec<u8>>,
             roles: Vec<KeyRole>,
             did_signature: Vec<u8>,
@@ -472,26 +455,16 @@ pub mod pallet {
             payload.extend_from_slice(&old_key_id.encode());
             payload.extend_from_slice(&new_public_key.encode());
             payload.extend_from_slice(&new_key_id_suffix.encode());
-            payload.extend_from_slice(&new_vm_type.encode());
             payload.extend_from_slice(&new_controller.encode());
             payload.extend_from_slice(&roles.encode());
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
-            let (normalized_new_public_key, new_multicodec) =
-                if new_vm_type == VerificationMethodType::Multikey {
-                let (codec, raw_key) =
-                    crate::key_validation::validate_multikey(&new_public_key).map_err(|err| {
-                        match err {
-                            KeyValidationError::InvalidPublicKey => Error::<T>::InvalidPublicKey,
-                            KeyValidationError::InvalidJwkSize => Error::<T>::InvalidJwkSize,
-                            KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
-                        }
-                    })?;
-                (raw_key, Some(codec))
-            } else {
-                Self::validate_key_material(new_vm_type, &new_public_key)?;
-                (new_public_key.clone(), None)
-            };
+            let (new_codec, normalized_new_public_key) =
+                crate::key_validation::validate_multikey(&new_public_key).map_err(|err| {
+                    match err {
+                        KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
+                    }
+                })?;
             Self::validate_controller_for_did(&new_controller)?;
             let did = Self::did_string_from_did_id(&did_id);
             let update_key_id = Self::update_key_id(&did);
@@ -528,8 +501,7 @@ pub mod pallet {
 
                 details.keys.push(DidKey {
                     key_id,
-                    vm_type: new_vm_type,
-                    multicodec: new_multicodec,
+                    multicodec: Some(new_codec),
                     public_key: normalized_new_public_key,
                     roles,
                     controller: new_controller,
@@ -653,20 +625,6 @@ pub mod pallet {
         fn validate_public_key(public_key: &[u8]) -> Result<(), Error<T>> {
             let _ = mldsa44::Public::try_from(public_key).map_err(|_| Error::<T>::InvalidPublicKey)?;
             Ok(())
-        }
-
-        fn validate_key_material(
-            vm_type: VerificationMethodType,
-            public_key: &[u8],
-        ) -> Result<(), Error<T>> {
-            crate::key_validation::validate_key_material(vm_type, public_key, |pk| {
-                Self::validate_public_key(pk).is_ok()
-            })
-            .map_err(|err| match err {
-                KeyValidationError::InvalidPublicKey => Error::<T>::InvalidPublicKey,
-                KeyValidationError::InvalidJwkSize => Error::<T>::InvalidJwkSize,
-                KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
-            })
         }
 
         fn validate_controller_for_did(

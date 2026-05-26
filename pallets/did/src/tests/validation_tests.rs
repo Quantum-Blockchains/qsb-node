@@ -3,7 +3,7 @@ use super::test_helpers::{
     add_key_signature, create_did, keypair, multikey_from_raw_mldsa44, public_key,
     set_metadata_signature, sign,
 };
-use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry, ServiceEndpoint, VerificationMethodType};
+use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry, ServiceEndpoint};
 use codec::Encode;
 use frame_support::{assert_noop, assert_ok};
 
@@ -42,7 +42,6 @@ fn multiple_authentication_keys_do_not_break_update_authority() {
             let details = maybe_details.as_mut().expect("did should exist");
             details.keys.push(crate::DidKey {
                 key_id: b"did:qsb:test#extra-auth".to_vec(),
-                vm_type: VerificationMethodType::Multikey,
                 multicodec: Some(0x1210),
                 public_key: second_pk,
                 roles: vec![KeyRole::Authentication],
@@ -149,7 +148,6 @@ fn add_key_rejects_duplicate_key_id_suffix() {
             &owner_pair,
             &did_input,
             &first_suffix,
-            VerificationMethodType::Multikey,
             &first_multikey,
             &first_roles,
             &first_controller,
@@ -158,7 +156,6 @@ fn add_key_rejects_duplicate_key_id_suffix() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             first_suffix,
-            VerificationMethodType::Multikey,
             first_multikey,
             first_roles,
             first_controller,
@@ -175,7 +172,6 @@ fn add_key_rejects_duplicate_key_id_suffix() {
             &owner_pair,
             &did_input,
             &dup_suffix,
-            VerificationMethodType::Multikey,
             &second_multikey,
             &second_roles,
             &second_controller,
@@ -185,7 +181,6 @@ fn add_key_rejects_duplicate_key_id_suffix() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 dup_suffix,
-                VerificationMethodType::Multikey,
                 second_multikey,
                 second_roles,
                 second_controller,
@@ -212,7 +207,6 @@ fn add_key_normalizes_suffix_without_hash() {
             &owner_pair,
             &did_input,
             &key_suffix,
-            VerificationMethodType::Multikey,
             &new_multikey,
             &roles,
             &controller,
@@ -222,7 +216,6 @@ fn add_key_normalizes_suffix_without_hash() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             key_suffix,
-            VerificationMethodType::Multikey,
             new_multikey,
             roles,
             controller,
@@ -255,7 +248,6 @@ fn add_key_rejects_full_did_key_id_suffix() {
             &owner_pair,
             &did_input,
             &invalid_suffix,
-            VerificationMethodType::Multikey,
             &new_multikey,
             &roles,
             &controller,
@@ -266,7 +258,6 @@ fn add_key_rejects_full_did_key_id_suffix() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 invalid_suffix,
-                VerificationMethodType::Multikey,
                 new_multikey,
                 roles,
                 controller,
@@ -293,7 +284,6 @@ fn add_key_rejects_invalid_key_id_suffix_characters() {
             &owner_pair,
             &did_input,
             &invalid_suffix,
-            VerificationMethodType::Multikey,
             &new_multikey,
             &roles,
             &controller,
@@ -304,7 +294,6 @@ fn add_key_rejects_invalid_key_id_suffix_characters() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 invalid_suffix,
-                VerificationMethodType::Multikey,
                 new_multikey,
                 roles,
                 controller,
@@ -339,43 +328,6 @@ fn add_service_rejects_invalid_service_endpoint_uri() {
 }
 
 #[test]
-fn add_key_rejects_oversized_jwk_payload() {
-    new_test_ext().execute_with(|| {
-        let owner_pair = keypair(1);
-        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
-
-        let oversized_jwk = vec![b'a'; (8 * 1024) + 1];
-        let roles = vec![KeyRole::AssertionMethod];
-        let key_suffix = Some(b"key-jwk-oversize".to_vec());
-        let controller = None;
-        let sig = add_key_signature(
-            &owner_pair,
-            &did_input,
-            &key_suffix,
-            VerificationMethodType::JsonWebKey2020,
-            &oversized_jwk,
-            &roles,
-            &controller,
-        );
-
-        assert_noop!(
-            Did::add_key(
-                RuntimeOrigin::signed(1),
-                did_input,
-                key_suffix,
-                VerificationMethodType::JsonWebKey2020,
-                oversized_jwk,
-                roles,
-                controller,
-                sig
-            ),
-            Error::<Test>::InvalidJwkSize
-        );
-    });
-}
-
-
-#[test]
 fn auto_generated_key_id_skips_taken_index() {
     new_test_ext().execute_with(|| {
         let owner_pair = keypair(1);
@@ -394,7 +346,6 @@ fn auto_generated_key_id_skips_taken_index() {
             &owner_pair,
             &did_input,
             &None,
-            VerificationMethodType::Multikey,
             &first_multikey,
             &first_roles,
             &None,
@@ -403,7 +354,6 @@ fn auto_generated_key_id_skips_taken_index() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             None,
-            VerificationMethodType::Multikey,
             first_multikey,
             first_roles,
             None,
@@ -418,7 +368,6 @@ fn auto_generated_key_id_skips_taken_index() {
             &owner_pair,
             &did_input,
             &None,
-            VerificationMethodType::Multikey,
             &second_multikey,
             &second_roles,
             &None,
@@ -427,7 +376,6 @@ fn auto_generated_key_id_skips_taken_index() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             None,
-            VerificationMethodType::Multikey,
             second_multikey,
             second_roles,
             None,

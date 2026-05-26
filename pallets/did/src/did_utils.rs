@@ -31,15 +31,6 @@ pub(crate) fn decode_did_id<T: Config>(input: &[u8]) -> Result<[u8; 32], Error<T
     decode_did_id_body::<T>(did_id_bytes)
 }
 
-pub(crate) fn decode_did_id_legacy<T: Config>(input: &[u8]) -> Result<[u8; 32], Error<T>> {
-    let did_id_bytes = if input.starts_with(DID_PREFIX) {
-        &input[DID_PREFIX.len()..]
-    } else {
-        input
-    };
-    decode_did_id_body::<T>(did_id_bytes)
-}
-
 fn decode_did_id_body<T: Config>(did_id_bytes: &[u8]) -> Result<[u8; 32], Error<T>> {
     let decoded = bs58::decode(did_id_bytes)
         .into_vec()

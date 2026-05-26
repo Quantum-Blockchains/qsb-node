@@ -3,17 +3,10 @@ use crate::did_utils;
 use crate::pallet::{Config, DidRecords};
 use crate::{
     DidDetails, DidDocument, DidDocumentMetadata, DidResolutionMetadata, DidResolutionResult,
-    DidVerificationMethod, KeyRole, VerificationMethodType,
+    DidVerificationMethod, KeyRole,
 };
 use sp_std::vec;
 use sp_std::vec::Vec;
-
-fn verification_method_type_label(vm_type: VerificationMethodType) -> Vec<u8> {
-    match vm_type {
-        VerificationMethodType::Multikey => b"Multikey".to_vec(),
-        VerificationMethodType::JsonWebKey2020 => b"JsonWebKey2020".to_vec(),
-    }
-}
 
 fn multibase_from_public_key(public_key: &[u8], codec: u64) -> Vec<u8> {
     let mut prefixed = encode_uvarint(codec);
@@ -53,23 +46,13 @@ fn map_to_did_document(did: &[u8], details: &DidDetails) -> DidDocument {
         let controller = key.controller.clone().unwrap_or_else(|| did.to_vec());
         let vm_id = key.key_id.clone();
 
-        let (public_key_multibase, public_key_jwk) = match key.vm_type {
-            VerificationMethodType::Multikey => {
-                (
-                    key.multicodec
-                        .map(|codec| multibase_from_public_key(&key.public_key, codec)),
-                    None,
-                )
-            }
-            VerificationMethodType::JsonWebKey2020 => (None, Some(key.public_key.clone())),
-        };
-
         verification_method.push(DidVerificationMethod {
             id: vm_id.clone(),
-            vm_type: verification_method_type_label(key.vm_type),
+            vm_type: b"Multikey".to_vec(),
             controller,
-            public_key_multibase,
-            public_key_jwk,
+            public_key_multibase: key
+                .multicodec
+                .map(|codec| multibase_from_public_key(&key.public_key, codec)),
         });
 
         for role in &key.roles {
