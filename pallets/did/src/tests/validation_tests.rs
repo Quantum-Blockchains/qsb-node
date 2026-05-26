@@ -1,6 +1,6 @@
 use super::mock_runtime::{new_test_ext, Did, RuntimeOrigin, Test};
 use super::test_helpers::{
-    add_key_signature, create_did, keypair, multikey_from_raw_mldsa44, public_key,
+    add_key_signature, create_did, keypair, multikey_from_codec_and_raw, multikey_from_raw_mldsa44, public_key,
     set_metadata_signature, sign,
 };
 use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry, ServiceEndpoint};
@@ -16,6 +16,29 @@ fn invalid_authentication_key_count_is_rejected_on_call() {
         DidRecords::<Test>::mutate(did_id, |maybe_details| {
             let details = maybe_details.as_mut().expect("did should exist");
             details.keys[0].revoked = true;
+        });
+
+        let entry = MetadataEntry {
+            key: b"k".to_vec(),
+            value: b"v".to_vec(),
+        };
+        let sig = set_metadata_signature(&owner_pair, &did_input, &entry);
+        assert_noop!(
+            Did::set_metadata(RuntimeOrigin::signed(1), did_input, entry, sig),
+            Error::<Test>::InvalidAuthenticationKeyCount
+        );
+    });
+}
+
+#[test]
+fn update_key_without_capability_invocation_is_rejected_on_call() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+
+        DidRecords::<Test>::mutate(did_id, |maybe_details| {
+            let details = maybe_details.as_mut().expect("did should exist");
+            details.keys[0].roles = vec![KeyRole::AssertionMethod];
         });
 
         let entry = MetadataEntry {
@@ -389,5 +412,70 @@ fn auto_generated_key_id_skips_taken_index() {
             .find(|k| k.public_key == second_pk)
             .expect("second key should exist");
         assert!(second_key.key_id.ends_with(b"#key-2"));
+    });
+}
+
+#[test]
+fn add_key_rejects_invalid_length_for_known_codec() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+
+        let bad_ed25519_multikey = multikey_from_codec_and_raw(0xED, &[7u8; 31]);
+        let roles = vec![KeyRole::AssertionMethod];
+        let key_suffix = Some(b"key-bad-ed".to_vec());
+        let controller = None;
+        let sig = add_key_signature(
+            &owner_pair,
+            &did_input,
+            &key_suffix,
+            &bad_ed25519_multikey,
+            &roles,
+            &controller,
+        );
+
+        assert_noop!(
+            Did::add_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                key_suffix,
+                bad_ed25519_multikey,
+                roles,
+                controller,
+                sig
+            ),
+            Error::<Test>::InvalidMultikey
+        );
+    });
+}
+
+#[test]
+fn add_key_allows_unknown_codec_when_multikey_is_valid() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+
+        let unknown_codec_multikey = multikey_from_codec_and_raw(0x7fff, &[9u8; 48]);
+        let roles = vec![KeyRole::AssertionMethod];
+        let key_suffix = Some(b"key-unknown-codec".to_vec());
+        let controller = None;
+        let sig = add_key_signature(
+            &owner_pair,
+            &did_input,
+            &key_suffix,
+            &unknown_codec_multikey,
+            &roles,
+            &controller,
+        );
+
+        assert_ok!(Did::add_key(
+            RuntimeOrigin::signed(1),
+            did_input,
+            key_suffix,
+            unknown_codec_multikey,
+            roles,
+            controller,
+            sig
+        ));
     });
 }

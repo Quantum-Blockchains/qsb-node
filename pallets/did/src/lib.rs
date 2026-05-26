@@ -195,6 +195,10 @@ pub mod pallet {
                 crate::key_validation::validate_multikey(&public_key).map_err(|err| match err {
                     KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
                 })?;
+            ensure!(
+                crate::key_validation::validate_known_codec_length(codec, &normalized_public_key),
+                Error::<T>::InvalidMultikey
+            );
             Self::validate_controller_for_did(&controller)?;
             let did = Self::did_string_from_did_id(&did_id);
 
@@ -465,6 +469,13 @@ pub mod pallet {
                         KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
                     }
                 })?;
+            ensure!(
+                crate::key_validation::validate_known_codec_length(
+                    new_codec,
+                    &normalized_new_public_key
+                ),
+                Error::<T>::InvalidMultikey
+            );
             Self::validate_controller_for_did(&new_controller)?;
             let did = Self::did_string_from_did_id(&did_id);
             let update_key_id = Self::update_key_id(&did);
@@ -494,6 +505,11 @@ pub mod pallet {
                     ensure!(
                         new_codec == MULTICODEC_ML_DSA_44,
                         Error::<T>::UnsupportedMultikeyCodec
+                    );
+                    Self::validate_public_key(&normalized_new_public_key)?;
+                    ensure!(
+                        roles.contains(&KeyRole::CapabilityInvocation),
+                        Error::<T>::CannotRemoveLastAuthenticationRole
                     );
                     update_key_id.clone()
                 } else {
@@ -540,6 +556,7 @@ pub mod pallet {
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
+            let update_key_id = Self::update_key_id(&did);
             let mut updated_public_key: Option<Vec<u8>> = None;
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
@@ -554,6 +571,12 @@ pub mod pallet {
                     !details.keys[key_idx].revoked,
                     Error::<T>::KeyAlreadyRevoked
                 );
+                if details.keys[key_idx].key_id == update_key_id {
+                    ensure!(
+                        roles.contains(&KeyRole::CapabilityInvocation),
+                        Error::<T>::CannotRemoveLastAuthenticationRole
+                    );
+                }
 
                 details.keys[key_idx].roles = roles;
                 updated_public_key = Some(details.keys[key_idx].public_key.clone());
@@ -712,6 +735,10 @@ pub mod pallet {
                 .iter()
                 .find(|key| !key.revoked && key.key_id == update_key_id)
                 .ok_or(Error::<T>::InvalidAuthenticationKeyCount)?;
+            ensure!(
+                key.roles.contains(&KeyRole::CapabilityInvocation),
+                Error::<T>::InvalidAuthenticationKeyCount
+            );
 
             let pk =
                 mldsa44::Public::try_from(key.public_key.as_slice()).map_err(|_| Error::<T>::InvalidPublicKey)?;

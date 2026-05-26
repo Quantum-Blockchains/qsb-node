@@ -68,13 +68,13 @@ fn revoke_key_rejects_update_key() {
 }
 
 #[test]
-fn update_roles_allows_removing_authentication_role() {
+fn update_roles_allows_changing_update_key_roles_if_capability_invocation_kept() {
     new_test_ext().execute_with(|| {
         let owner_pair = keypair(1);
         let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
         let mut owner_key_id = did_input.clone();
         owner_key_id.extend_from_slice(b"#update");
-        let new_roles = vec![KeyRole::AssertionMethod];
+        let new_roles = vec![KeyRole::CapabilityInvocation, KeyRole::AssertionMethod];
         let did_signature =
             update_roles_signature(&owner_pair, &did_input, &owner_key_id, &new_roles);
 
@@ -89,7 +89,7 @@ fn update_roles_allows_removing_authentication_role() {
 }
 
 #[test]
-fn rotate_update_key_keeps_update_authority_even_without_auth_role() {
+fn rotate_update_key_keeps_update_authority_with_capability_invocation_role() {
     new_test_ext().execute_with(|| {
         let owner_pair = keypair(1);
         let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
@@ -98,7 +98,7 @@ fn rotate_update_key_keeps_update_authority_even_without_auth_role() {
         let new_pair = keypair(2);
         let new_pk = public_key(&new_pair);
         let new_multikey = multikey_from_raw_mldsa44(&new_pk);
-        let new_roles = vec![KeyRole::AssertionMethod];
+        let new_roles = vec![KeyRole::CapabilityInvocation, KeyRole::AssertionMethod];
         let new_key_id_suffix = None;
         let new_controller = None;
         let did_signature = rotate_key_signature(
@@ -309,6 +309,70 @@ fn rotate_update_key_rejects_non_mldsa44_codec() {
                 rotate_sig
             ),
             Error::<Test>::UnsupportedMultikeyCodec
+        );
+    });
+}
+
+#[test]
+fn rotate_update_key_requires_capability_invocation_role() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let mut owner_key_id = did_input.clone();
+        owner_key_id.extend_from_slice(b"#update");
+
+        let new_pair = keypair(2);
+        let new_pk = public_key(&new_pair);
+        let new_multikey = multikey_from_raw_mldsa44(&new_pk);
+        let new_roles = vec![KeyRole::AssertionMethod];
+        let new_key_id_suffix = None;
+        let new_controller = None;
+        let rotate_sig = rotate_key_signature(
+            &owner_pair,
+            &did_input,
+            &owner_key_id,
+            &new_multikey,
+            &new_key_id_suffix,
+            &new_controller,
+            &new_roles,
+        );
+
+        assert_noop!(
+            Did::rotate_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                owner_key_id,
+                new_multikey,
+                new_key_id_suffix,
+                new_controller,
+                new_roles,
+                rotate_sig
+            ),
+            Error::<Test>::CannotRemoveLastAuthenticationRole
+        );
+    });
+}
+
+#[test]
+fn update_roles_on_update_key_requires_capability_invocation() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let mut owner_key_id = did_input.clone();
+        owner_key_id.extend_from_slice(b"#update");
+        let new_roles = vec![KeyRole::AssertionMethod];
+        let did_signature =
+            update_roles_signature(&owner_pair, &did_input, &owner_key_id, &new_roles);
+
+        assert_noop!(
+            Did::update_roles(
+                RuntimeOrigin::signed(1),
+                did_input,
+                owner_key_id,
+                new_roles,
+                did_signature
+            ),
+            Error::<Test>::CannotRemoveLastAuthenticationRole
         );
     });
 }
