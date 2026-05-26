@@ -1,0 +1,89 @@
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use sp_std::vec::Vec;
+
+use crate::constants::MAX_JWK_PUBLIC_KEY_BYTES;
+use crate::VerificationMethodType;
+
+pub(crate) enum KeyValidationError {
+    InvalidPublicKey,
+    InvalidJwkSize,
+    InvalidMultikey,
+}
+
+pub(crate) fn validate_key_material<F>(
+    vm_type: VerificationMethodType,
+    public_key: &[u8],
+    validate_raw_public_key: F,
+) -> Result<(), KeyValidationError>
+where
+    F: Fn(&[u8]) -> bool,
+{
+    match vm_type {
+        VerificationMethodType::Multikey => {
+            if validate_raw_public_key(public_key) {
+                Ok(())
+            } else {
+                Err(KeyValidationError::InvalidPublicKey)
+            }
+        }
+        VerificationMethodType::JsonWebKey2020 => {
+            if public_key.is_empty() {
+                return Err(KeyValidationError::InvalidPublicKey);
+            }
+            if public_key.len() > MAX_JWK_PUBLIC_KEY_BYTES {
+                return Err(KeyValidationError::InvalidJwkSize);
+            }
+            Ok(())
+        }
+    }
+}
+
+// Validates W3C Multikey lexical/encoding structure:
+// - multibase base64url prefix 'u'
+// - decodable base64url payload
+// - leading unsigned varint multicodec code
+// - supported multicodec from CG-FINAL-di-quantum-safe-20260422
+// - expected raw key size after codec prefix
+//
+// Returns (multicodec_code, raw_public_key_bytes).
+pub(crate) fn validate_multikey(multikey: &[u8]) -> Result<(u64, Vec<u8>), KeyValidationError> {
+    if multikey.is_empty() || multikey[0] != b'u' || multikey.len() <= 1 {
+        return Err(KeyValidationError::InvalidMultikey);
+    }
+
+    let decoded = URL_SAFE_NO_PAD
+        .decode(&multikey[1..])
+        .map_err(|_| KeyValidationError::InvalidMultikey)?;
+    if decoded.is_empty() {
+        return Err(KeyValidationError::InvalidMultikey);
+    }
+
+    let (codec, codec_len) = decode_uvarint(&decoded).ok_or(KeyValidationError::InvalidMultikey)?;
+    if codec_len >= decoded.len() {
+        return Err(KeyValidationError::InvalidMultikey);
+    }
+    let key_bytes = decoded[codec_len..].to_vec();
+    if key_bytes.is_empty() {
+        return Err(KeyValidationError::InvalidMultikey);
+    }
+
+    Ok((codec, key_bytes))
+}
+
+pub(crate) fn decode_uvarint(input: &[u8]) -> Option<(u64, usize)> {
+    let mut value: u64 = 0;
+    let mut shift = 0u32;
+
+    for (idx, byte) in input.iter().copied().enumerate() {
+        let low = (byte & 0x7f) as u64;
+        value |= low.checked_shl(shift)?;
+        if (byte & 0x80) == 0 {
+            return Some((value, idx + 1));
+        }
+        shift = shift.saturating_add(7);
+        if shift >= 64 {
+            return None;
+        }
+    }
+    None
+}

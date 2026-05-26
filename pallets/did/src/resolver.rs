@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use crate::did_utils;
 use crate::pallet::{Config, DidRecords};
 use crate::{
@@ -14,11 +15,29 @@ fn verification_method_type_label(vm_type: VerificationMethodType) -> Vec<u8> {
     }
 }
 
-fn multibase_from_public_key(public_key: &[u8]) -> Vec<u8> {
-    let b58 = bs58::encode(public_key).into_string();
-    let mut out = Vec::with_capacity(b58.len() + 1);
-    out.push(b'z');
-    out.extend_from_slice(b58.as_bytes());
+fn multibase_from_public_key(public_key: &[u8], codec: u64) -> Vec<u8> {
+    let mut prefixed = encode_uvarint(codec);
+    prefixed.extend_from_slice(public_key);
+    let encoded = URL_SAFE_NO_PAD.encode(prefixed);
+    let mut out = Vec::with_capacity(encoded.len() + 1);
+    out.push(b'u');
+    out.extend_from_slice(encoded.as_bytes());
+    out
+}
+
+fn encode_uvarint(mut value: u64) -> Vec<u8> {
+    let mut out = Vec::new();
+    loop {
+        let mut byte = (value & 0x7f) as u8;
+        value >>= 7;
+        if value != 0 {
+            byte |= 0x80;
+        }
+        out.push(byte);
+        if value == 0 {
+            break;
+        }
+    }
     out
 }
 
@@ -36,7 +55,11 @@ fn map_to_did_document(did: &[u8], details: &DidDetails) -> DidDocument {
 
         let (public_key_multibase, public_key_jwk) = match key.vm_type {
             VerificationMethodType::Multikey => {
-                (Some(multibase_from_public_key(&key.public_key)), None)
+                (
+                    key.multicodec
+                        .map(|codec| multibase_from_public_key(&key.public_key, codec)),
+                    None,
+                )
             }
             VerificationMethodType::JsonWebKey2020 => (None, Some(key.public_key.clone())),
         };

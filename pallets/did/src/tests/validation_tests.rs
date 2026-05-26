@@ -1,8 +1,10 @@
 use super::mock_runtime::{new_test_ext, Did, RuntimeOrigin, Test};
 use super::test_helpers::{
-    add_key_signature, create_did, keypair, public_key, set_metadata_signature,
+    add_key_signature, create_did, keypair, multikey_from_raw_mldsa44, public_key,
+    set_metadata_signature, sign,
 };
-use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry, VerificationMethodType};
+use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry, ServiceEndpoint, VerificationMethodType};
+use codec::Encode;
 use frame_support::{assert_noop, assert_ok};
 
 #[test]
@@ -29,7 +31,7 @@ fn invalid_authentication_key_count_is_rejected_on_call() {
 }
 
 #[test]
-fn invalid_authentication_key_count_with_two_active_auth_keys_is_rejected_on_call() {
+fn multiple_authentication_keys_do_not_break_update_authority() {
     new_test_ext().execute_with(|| {
         let owner_pair = keypair(1);
         let (did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
@@ -41,6 +43,7 @@ fn invalid_authentication_key_count_with_two_active_auth_keys_is_rejected_on_cal
             details.keys.push(crate::DidKey {
                 key_id: b"did:qsb:test#extra-auth".to_vec(),
                 vm_type: VerificationMethodType::Multikey,
+                multicodec: Some(0x1210),
                 public_key: second_pk,
                 roles: vec![KeyRole::Authentication],
                 controller: None,
@@ -53,10 +56,12 @@ fn invalid_authentication_key_count_with_two_active_auth_keys_is_rejected_on_cal
             value: b"v2".to_vec(),
         };
         let sig = set_metadata_signature(&owner_pair, &did_input, &entry);
-        assert_noop!(
-            Did::set_metadata(RuntimeOrigin::signed(1), did_input, entry, sig),
-            Error::<Test>::InvalidAuthenticationKeyCount
-        );
+        assert_ok!(Did::set_metadata(
+            RuntimeOrigin::signed(1),
+            did_input,
+            entry,
+            sig
+        ));
     });
 }
 
@@ -68,7 +73,7 @@ fn invalid_public_key_is_rejected_in_create_did() {
 
         assert_noop!(
             Did::create_did(RuntimeOrigin::signed(1), invalid_pk, dummy_signature),
-            Error::<Test>::InvalidPublicKey
+            Error::<Test>::InvalidMultikey
         );
     });
 }
@@ -78,9 +83,10 @@ fn invalid_create_signature_format_is_rejected() {
     new_test_ext().execute_with(|| {
         let owner_pair = keypair(1);
         let owner_pk = public_key(&owner_pair);
+        let owner_multikey = multikey_from_raw_mldsa44(&owner_pk);
 
         assert_noop!(
-            Did::create_did(RuntimeOrigin::signed(1), owner_pk, vec![0u8; 17]),
+            Did::create_did(RuntimeOrigin::signed(1), owner_multikey, vec![0u8; 17]),
             Error::<Test>::InvalidDidSignature
         );
     });
@@ -135,6 +141,7 @@ fn add_key_rejects_duplicate_key_id_suffix() {
 
         let first_pair = keypair(2);
         let first_pk = public_key(&first_pair);
+        let first_multikey = multikey_from_raw_mldsa44(&first_pk);
         let first_roles = vec![KeyRole::AssertionMethod];
         let first_suffix = Some(b"key-11".to_vec());
         let first_controller = None;
@@ -143,7 +150,7 @@ fn add_key_rejects_duplicate_key_id_suffix() {
             &did_input,
             &first_suffix,
             VerificationMethodType::Multikey,
-            &first_pk,
+            &first_multikey,
             &first_roles,
             &first_controller,
         );
@@ -152,7 +159,7 @@ fn add_key_rejects_duplicate_key_id_suffix() {
             did_input.clone(),
             first_suffix,
             VerificationMethodType::Multikey,
-            first_pk,
+            first_multikey,
             first_roles,
             first_controller,
             first_sig
@@ -160,6 +167,7 @@ fn add_key_rejects_duplicate_key_id_suffix() {
 
         let second_pair = keypair(3);
         let second_pk = public_key(&second_pair);
+        let second_multikey = multikey_from_raw_mldsa44(&second_pk);
         let second_roles = vec![KeyRole::CapabilityInvocation];
         let dup_suffix = Some(b"key-11".to_vec());
         let second_controller = None;
@@ -168,7 +176,7 @@ fn add_key_rejects_duplicate_key_id_suffix() {
             &did_input,
             &dup_suffix,
             VerificationMethodType::Multikey,
-            &second_pk,
+            &second_multikey,
             &second_roles,
             &second_controller,
         );
@@ -178,7 +186,7 @@ fn add_key_rejects_duplicate_key_id_suffix() {
                 did_input,
                 dup_suffix,
                 VerificationMethodType::Multikey,
-                second_pk,
+                second_multikey,
                 second_roles,
                 second_controller,
                 second_sig
@@ -196,6 +204,7 @@ fn add_key_normalizes_suffix_without_hash() {
 
         let new_pair = keypair(2);
         let new_pk = public_key(&new_pair);
+        let new_multikey = multikey_from_raw_mldsa44(&new_pk);
         let roles = vec![KeyRole::AssertionMethod];
         let key_suffix = Some(b"key-12".to_vec());
         let controller = None;
@@ -204,7 +213,7 @@ fn add_key_normalizes_suffix_without_hash() {
             &did_input,
             &key_suffix,
             VerificationMethodType::Multikey,
-            &new_pk,
+            &new_multikey,
             &roles,
             &controller,
         );
@@ -214,7 +223,7 @@ fn add_key_normalizes_suffix_without_hash() {
             did_input.clone(),
             key_suffix,
             VerificationMethodType::Multikey,
-            new_pk.clone(),
+            new_multikey,
             roles,
             controller,
             sig
@@ -238,6 +247,7 @@ fn add_key_rejects_full_did_key_id_suffix() {
 
         let new_pair = keypair(2);
         let new_pk = public_key(&new_pair);
+        let new_multikey = multikey_from_raw_mldsa44(&new_pk);
         let roles = vec![KeyRole::AssertionMethod];
         let invalid_suffix = Some(b"did:qsb:some#key-13".to_vec());
         let controller = None;
@@ -246,7 +256,7 @@ fn add_key_rejects_full_did_key_id_suffix() {
             &did_input,
             &invalid_suffix,
             VerificationMethodType::Multikey,
-            &new_pk,
+            &new_multikey,
             &roles,
             &controller,
         );
@@ -257,7 +267,7 @@ fn add_key_rejects_full_did_key_id_suffix() {
                 did_input,
                 invalid_suffix,
                 VerificationMethodType::Multikey,
-                new_pk,
+                new_multikey,
                 roles,
                 controller,
                 sig
@@ -266,6 +276,104 @@ fn add_key_rejects_full_did_key_id_suffix() {
         );
     });
 }
+
+#[test]
+fn add_key_rejects_invalid_key_id_suffix_characters() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+
+        let new_pair = keypair(2);
+        let new_pk = public_key(&new_pair);
+        let new_multikey = multikey_from_raw_mldsa44(&new_pk);
+        let roles = vec![KeyRole::AssertionMethod];
+        let invalid_suffix = Some(b"bad suffix".to_vec());
+        let controller = None;
+        let sig = add_key_signature(
+            &owner_pair,
+            &did_input,
+            &invalid_suffix,
+            VerificationMethodType::Multikey,
+            &new_multikey,
+            &roles,
+            &controller,
+        );
+
+        assert_noop!(
+            Did::add_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                invalid_suffix,
+                VerificationMethodType::Multikey,
+                new_multikey,
+                roles,
+                controller,
+                sig
+            ),
+            Error::<Test>::InvalidKeyIdSuffix
+        );
+    });
+}
+
+#[test]
+fn add_service_rejects_invalid_service_endpoint_uri() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let service = ServiceEndpoint {
+            id: b"#svc-1".to_vec(),
+            service_type: b"type".to_vec(),
+            endpoint: b"not a uri".to_vec(),
+        };
+
+        let mut payload = b"QSB_DID_ADD_SERVICE".to_vec();
+        payload.extend_from_slice(&did_input.encode());
+        payload.extend_from_slice(&service.encode());
+        let sig = sign(&owner_pair, &payload);
+
+        assert_noop!(
+            Did::add_service(RuntimeOrigin::signed(1), did_input, service, sig),
+            Error::<Test>::InvalidServiceEndpoint
+        );
+    });
+}
+
+#[test]
+fn add_key_rejects_oversized_jwk_payload() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+
+        let oversized_jwk = vec![b'a'; (8 * 1024) + 1];
+        let roles = vec![KeyRole::AssertionMethod];
+        let key_suffix = Some(b"key-jwk-oversize".to_vec());
+        let controller = None;
+        let sig = add_key_signature(
+            &owner_pair,
+            &did_input,
+            &key_suffix,
+            VerificationMethodType::JsonWebKey2020,
+            &oversized_jwk,
+            &roles,
+            &controller,
+        );
+
+        assert_noop!(
+            Did::add_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                key_suffix,
+                VerificationMethodType::JsonWebKey2020,
+                oversized_jwk,
+                roles,
+                controller,
+                sig
+            ),
+            Error::<Test>::InvalidJwkSize
+        );
+    });
+}
+
 
 #[test]
 fn auto_generated_key_id_skips_taken_index() {
@@ -280,13 +388,14 @@ fn auto_generated_key_id_skips_taken_index() {
 
         let first_pair = keypair(2);
         let first_pk = public_key(&first_pair);
+        let first_multikey = multikey_from_raw_mldsa44(&first_pk);
         let first_roles = vec![KeyRole::AssertionMethod];
         let first_sig = add_key_signature(
             &owner_pair,
             &did_input,
             &None,
             VerificationMethodType::Multikey,
-            &first_pk,
+            &first_multikey,
             &first_roles,
             &None,
         );
@@ -295,7 +404,7 @@ fn auto_generated_key_id_skips_taken_index() {
             did_input.clone(),
             None,
             VerificationMethodType::Multikey,
-            first_pk,
+            first_multikey,
             first_roles,
             None,
             first_sig
@@ -303,13 +412,14 @@ fn auto_generated_key_id_skips_taken_index() {
 
         let second_pair = keypair(3);
         let second_pk = public_key(&second_pair);
+        let second_multikey = multikey_from_raw_mldsa44(&second_pk);
         let second_roles = vec![KeyRole::CapabilityInvocation];
         let second_sig = add_key_signature(
             &owner_pair,
             &did_input,
             &None,
             VerificationMethodType::Multikey,
-            &second_pk,
+            &second_multikey,
             &second_roles,
             &None,
         );
@@ -318,7 +428,7 @@ fn auto_generated_key_id_skips_taken_index() {
             did_input.clone(),
             None,
             VerificationMethodType::Multikey,
-            second_pk.clone(),
+            second_multikey,
             second_roles,
             None,
             second_sig

@@ -605,10 +605,6 @@ impl_runtime_apis! {
         fn did_by_string(did: Vec<u8>) -> Option<did::DidDetails> {
             did::Pallet::<Runtime>::get_did(did).ok()
         }
-
-        fn did_document_by_string(did: Vec<u8>) -> did::DidResolutionResult {
-            did::Pallet::<Runtime>::resolve_did(did)
-        }
     }
 
 

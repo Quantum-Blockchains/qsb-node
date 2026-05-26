@@ -10,7 +10,7 @@ fn service_management_still_works_with_authentication_signature() {
         let owner_pair = keypair(1);
         let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
         let service = ServiceEndpoint {
-            id: b"svc-1".to_vec(),
+            id: b"#svc-1".to_vec(),
             service_type: b"type".to_vec(),
             endpoint: b"https://example.org".to_vec(),
         };

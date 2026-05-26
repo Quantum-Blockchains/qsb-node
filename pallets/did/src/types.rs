@@ -25,6 +25,7 @@ pub enum VerificationMethodType {
 pub struct DidKey {
     pub key_id: Vec<u8>,
     pub vm_type: VerificationMethodType,
+    pub multicodec: Option<u64>,
     pub public_key: Vec<u8>,
     pub roles: Vec<KeyRole>,
     pub controller: Option<Vec<u8>>,
