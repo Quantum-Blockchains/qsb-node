@@ -10,3 +10,10 @@ pub(crate) const DID_SET_METADATA_PREFIX: &[u8] = b"QSB_DID_SET_METADATA";
 pub(crate) const DID_REMOVE_METADATA_PREFIX: &[u8] = b"QSB_DID_REMOVE_METADATA";
 pub(crate) const DID_ROTATE_KEY_PREFIX: &[u8] = b"QSB_DID_ROTATE_KEY";
 pub(crate) const DID_UPDATE_ROLES_PREFIX: &[u8] = b"QSB_DID_UPDATE_ROLES";
+// Quantum-Safe Cryptosuites v0.3 (CG-FINAL-di-quantum-safe-20260422) Table 1.
+pub(crate) const MULTICODEC_ML_DSA_44: u64 = 0x1210;
+pub(crate) const MULTICODEC_ML_DSA_65: u64 = 0x1211;
+pub(crate) const MULTICODEC_ML_DSA_87: u64 = 0x1212;
+pub(crate) const MULTICODEC_ED25519_PUB: u64 = 0xED;
+pub(crate) const MULTICODEC_SECP256K1_PUB: u64 = 0x1200;
+pub(crate) const MULTICODEC_P256_PUB: u64 = 0x1201;

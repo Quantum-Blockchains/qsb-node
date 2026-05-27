@@ -26,6 +26,7 @@ sp-api = { version = "4.0.0-dev", default-features = false, git = "https://githu
 sp-io = { version = "23.0.0", default-features = false, git = "https://github.com/Quantum-Blockchains/substrate.git", branch = "qsb-v0.0.1" }
 ed25519-zebra = { version = "3.1.0", default-features = false, optional = true }
 bs58 = { version = "0.4.0", default-features = false, features = ["alloc"] }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 
 [features]
 default = ["std"]
@@ -43,6 +44,7 @@ std = [
     "sp-io/std",
     "ed25519-zebra/std",
     "bs58/std",
+    "base64/std",
     "serde/std",
 ]
 runtime-benchmarks = [

@@ -21,7 +21,7 @@ fn deactivate_did_blocks_follow_up_mutations() {
         }));
 
         let service = ServiceEndpoint {
-            id: b"svc-2".to_vec(),
+            id: b"#svc-2".to_vec(),
             service_type: b"type".to_vec(),
             endpoint: b"https://example.org/2".to_vec(),
         };
