@@ -37,6 +37,7 @@ pub mod pallet {
     pub trait Config: frame_system::Config {
         type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
         type WeightInfo: crate::default_weights::WeightInfo;
+        type MaxJwkLength: Get<u32>;
     }
 
     #[pallet::storage]
@@ -69,6 +70,9 @@ pub mod pallet {
         InvalidServiceEndpoint,
         InvalidMultikey,
         UnsupportedMultikeyCodec,
+        InvalidJwk,
+        JwkTooLarge,
+        UnsupportedKeyFormatForCapabilityInvocation,
     }
 
     #[pallet::event]
@@ -79,23 +83,23 @@ pub mod pallet {
         },
         KeyAdded {
             did: Vec<u8>,
-            public_key: Vec<u8>,
+            key_material: KeyMaterialInput,
         },
         KeyRevoked {
             did: Vec<u8>,
-            public_key: Vec<u8>,
+            key_material: DidKeyMaterial,
         },
         DidDeactivated {
             did: Vec<u8>,
         },
         KeyRotated {
             did: Vec<u8>,
-            old_public_key: Vec<u8>,
-            new_public_key: Vec<u8>,
+            old_key_material: DidKeyMaterial,
+            new_key_material: KeyMaterialInput,
         },
         RolesUpdated {
             did: Vec<u8>,
-            public_key: Vec<u8>,
+            key_material: DidKeyMaterial,
         },
         ServiceAdded {
             did: Vec<u8>,
@@ -155,8 +159,10 @@ pub mod pallet {
                 deactivated: false,
                 keys: vec![DidKey {
                     key_id,
-                    multicodec: Some(codec),
-                    public_key: raw_public_key,
+                    key_material: DidKeyMaterial::Multikey {
+                        multicodec: codec,
+                        public_key: raw_public_key,
+                    },
                     roles: vec![KeyRole::CapabilityInvocation],
                     revoked: false,
                     controller: None,
@@ -177,7 +183,7 @@ pub mod pallet {
             origin: OriginFor<T>,
             did_id: Vec<u8>,
             key_id_suffix: Option<Vec<u8>>,
-            public_key: Vec<u8>,
+            key_material: KeyMaterialInput,
             roles: Vec<KeyRole>,
             controller: Option<Vec<u8>>,
             did_signature: Vec<u8>,
@@ -186,19 +192,13 @@ pub mod pallet {
             let mut payload = DID_ADD_KEY_PREFIX.to_vec();
             payload.extend_from_slice(&did_id.encode());
             payload.extend_from_slice(&key_id_suffix.encode());
-            payload.extend_from_slice(&public_key.encode());
+            payload.extend_from_slice(&key_material.encode());
             payload.extend_from_slice(&roles.encode());
             payload.extend_from_slice(&controller.encode());
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
-            let (codec, normalized_public_key) =
-                crate::key_validation::validate_multikey(&public_key).map_err(|err| match err {
-                    KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
-                })?;
-            ensure!(
-                crate::key_validation::validate_known_codec_length(codec, &normalized_public_key),
-                Error::<T>::InvalidMultikey
-            );
+            let normalized_key_material = Self::validate_key_material_input(&key_material)?;
+            Self::ensure_capability_invocation_supported(&normalized_key_material, &roles)?;
             Self::validate_controller_for_did(&controller)?;
             let did = Self::did_string_from_did_id(&did_id);
 
@@ -209,15 +209,14 @@ pub mod pallet {
                     !details
                         .keys
                         .iter()
-                        .any(|key| key.public_key == normalized_public_key),
+                        .any(|key| key.key_material == normalized_key_material),
                     Error::<T>::KeyAlreadyExists
                 );
                 let key_id = Self::resolve_unique_key_id(details, &did, key_id_suffix)?;
 
                 details.keys.push(DidKey {
                     key_id,
-                    multicodec: Some(codec),
-                    public_key: normalized_public_key.clone(),
+                    key_material: normalized_key_material,
                     roles,
                     controller,
                     revoked: false,
@@ -226,7 +225,7 @@ pub mod pallet {
                 Ok(())
             })?;
 
-            Self::deposit_event(Event::KeyAdded { did, public_key });
+            Self::deposit_event(Event::KeyAdded { did, key_material });
             Ok(())
         }
 
@@ -246,7 +245,7 @@ pub mod pallet {
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
             let update_key_id = Self::update_key_id(&did);
-            let mut revoked_public_key: Option<Vec<u8>> = None;
+            let mut revoked_key_material: Option<DidKeyMaterial> = None;
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
@@ -268,13 +267,13 @@ pub mod pallet {
                 );
 
                 details.keys[key_idx].revoked = true;
-                revoked_public_key = Some(details.keys[key_idx].public_key.clone());
+                revoked_key_material = Some(details.keys[key_idx].key_material.clone());
                 details.version = details.version.saturating_add(1);
                 Ok(())
             })?;
 
-            let public_key = revoked_public_key.ok_or(Error::<T>::KeyNotFound)?;
-            Self::deposit_event(Event::KeyRevoked { did, public_key });
+            let key_material = revoked_key_material.ok_or(Error::<T>::KeyNotFound)?;
+            Self::deposit_event(Event::KeyRevoked { did, key_material });
             Ok(())
         }
 
@@ -447,7 +446,7 @@ pub mod pallet {
             origin: OriginFor<T>,
             did_id: Vec<u8>,
             old_key_id: Vec<u8>,
-            new_public_key: Vec<u8>,
+            new_key_material: KeyMaterialInput,
             new_key_id_suffix: Option<Vec<u8>>,
             new_controller: Option<Vec<u8>>,
             roles: Vec<KeyRole>,
@@ -457,29 +456,18 @@ pub mod pallet {
             let mut payload = DID_ROTATE_KEY_PREFIX.to_vec();
             payload.extend_from_slice(&did_id.encode());
             payload.extend_from_slice(&old_key_id.encode());
-            payload.extend_from_slice(&new_public_key.encode());
+            payload.extend_from_slice(&new_key_material.encode());
             payload.extend_from_slice(&new_key_id_suffix.encode());
             payload.extend_from_slice(&new_controller.encode());
             payload.extend_from_slice(&roles.encode());
             let did_id = Self::decode_did_id(&did_id)?;
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
-            let (new_codec, normalized_new_public_key) =
-                crate::key_validation::validate_multikey(&new_public_key).map_err(|err| {
-                    match err {
-                        KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
-                    }
-                })?;
-            ensure!(
-                crate::key_validation::validate_known_codec_length(
-                    new_codec,
-                    &normalized_new_public_key
-                ),
-                Error::<T>::InvalidMultikey
-            );
+            let normalized_new_key_material = Self::validate_key_material_input(&new_key_material)?;
+            Self::ensure_capability_invocation_supported(&normalized_new_key_material, &roles)?;
             Self::validate_controller_for_did(&new_controller)?;
             let did = Self::did_string_from_did_id(&did_id);
             let update_key_id = Self::update_key_id(&did);
-            let mut old_public_key_for_event: Option<Vec<u8>> = None;
+            let mut old_key_material_for_event: Option<DidKeyMaterial> = None;
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
@@ -488,7 +476,7 @@ pub mod pallet {
                     !details
                         .keys
                         .iter()
-                        .any(|key| key.public_key == normalized_new_public_key),
+                        .any(|key| key.key_material == normalized_new_key_material),
                     Error::<T>::KeyAlreadyExists
                 );
                 let key_idx = details
@@ -502,11 +490,18 @@ pub mod pallet {
                 );
 
                 let key_id = if details.keys[key_idx].key_id == update_key_id {
+                    let DidKeyMaterial::Multikey {
+                        multicodec,
+                        public_key,
+                    } = &normalized_new_key_material
+                    else {
+                        return Err(Error::<T>::UnsupportedKeyFormatForCapabilityInvocation.into());
+                    };
                     ensure!(
-                        new_codec == MULTICODEC_ML_DSA_44,
+                        *multicodec == MULTICODEC_ML_DSA_44,
                         Error::<T>::UnsupportedMultikeyCodec
                     );
-                    Self::validate_public_key(&normalized_new_public_key)?;
+                    Self::validate_public_key(public_key)?;
                     ensure!(
                         roles.contains(&KeyRole::CapabilityInvocation),
                         Error::<T>::CannotRemoveLastAuthenticationRole
@@ -515,14 +510,13 @@ pub mod pallet {
                 } else {
                     Self::resolve_unique_key_id(details, &did, new_key_id_suffix)?
                 };
-                
-                old_public_key_for_event = Some(details.keys[key_idx].public_key.clone());
+
+                old_key_material_for_event = Some(details.keys[key_idx].key_material.clone());
                 details.keys[key_idx].revoked = true;
 
                 details.keys.push(DidKey {
                     key_id,
-                    multicodec: Some(new_codec),
-                    public_key: normalized_new_public_key,
+                    key_material: normalized_new_key_material,
                     roles,
                     controller: new_controller,
                     revoked: false,
@@ -533,8 +527,8 @@ pub mod pallet {
 
             Self::deposit_event(Event::KeyRotated {
                 did,
-                old_public_key: old_public_key_for_event.ok_or(Error::<T>::KeyNotFound)?,
-                new_public_key,
+                old_key_material: old_key_material_for_event.ok_or(Error::<T>::KeyNotFound)?,
+                new_key_material,
             });
             Ok(())
         }
@@ -557,7 +551,7 @@ pub mod pallet {
             Self::verify_did_signature(did_id, &did_signature, &payload)?;
             let did = Self::did_string_from_did_id(&did_id);
             let update_key_id = Self::update_key_id(&did);
-            let mut updated_public_key: Option<Vec<u8>> = None;
+            let mut updated_key_material: Option<DidKeyMaterial> = None;
 
             DidRecords::<T>::try_mutate(did_id, |maybe_details| -> DispatchResult {
                 let details = maybe_details.as_mut().ok_or(Error::<T>::DidNotFound)?;
@@ -577,15 +571,19 @@ pub mod pallet {
                         Error::<T>::CannotRemoveLastAuthenticationRole
                     );
                 }
+                Self::ensure_capability_invocation_supported(
+                    &details.keys[key_idx].key_material,
+                    &roles,
+                )?;
 
                 details.keys[key_idx].roles = roles;
-                updated_public_key = Some(details.keys[key_idx].public_key.clone());
+                updated_key_material = Some(details.keys[key_idx].key_material.clone());
                 details.version = details.version.saturating_add(1);
                 Ok(())
             })?;
 
-            let public_key = updated_public_key.ok_or(Error::<T>::KeyNotFound)?;
-            Self::deposit_event(Event::RolesUpdated { did, public_key });
+            let key_material = updated_key_material.ok_or(Error::<T>::KeyNotFound)?;
+            Self::deposit_event(Event::RolesUpdated { did, key_material });
             Ok(())
         }
     }
@@ -613,10 +611,7 @@ pub mod pallet {
                     prefixed.extend_from_slice(&id_suffix);
                     prefixed
                 };
-                ensure!(
-                    normalized_suffix.len() > 1,
-                    Error::<T>::InvalidKeyIdSuffix
-                );
+                ensure!(normalized_suffix.len() > 1, Error::<T>::InvalidKeyIdSuffix);
                 ensure!(
                     crate::did_utils::is_valid_key_id_suffix(&normalized_suffix),
                     Error::<T>::InvalidKeyIdSuffix
@@ -649,14 +644,59 @@ pub mod pallet {
             key_id
         }
 
-        fn validate_public_key(public_key: &[u8]) -> Result<(), Error<T>> {
-            let _ = mldsa44::Public::try_from(public_key).map_err(|_| Error::<T>::InvalidPublicKey)?;
+        fn validate_key_material_input(
+            key_material: &KeyMaterialInput,
+        ) -> Result<DidKeyMaterial, Error<T>> {
+            match key_material {
+                KeyMaterialInput::Multikey(multikey) => {
+                    let (multicodec, public_key) = crate::key_validation::validate_multikey(
+                        multikey,
+                    )
+                    .map_err(|err| match err {
+                        KeyValidationError::InvalidMultikey => Error::<T>::InvalidMultikey,
+                    })?;
+                    ensure!(
+                        crate::key_validation::validate_known_codec_length(multicodec, &public_key),
+                        Error::<T>::InvalidMultikey
+                    );
+                    Ok(DidKeyMaterial::Multikey {
+                        multicodec,
+                        public_key,
+                    })
+                }
+                KeyMaterialInput::Jwk(public_key_jwk) => {
+                    ensure!(!public_key_jwk.is_empty(), Error::<T>::InvalidJwk);
+                    ensure!(
+                        public_key_jwk.len() <= T::MaxJwkLength::get() as usize,
+                        Error::<T>::JwkTooLarge
+                    );
+                    Ok(DidKeyMaterial::Jwk {
+                        public_key_jwk: public_key_jwk.clone(),
+                    })
+                }
+            }
+        }
+
+        fn ensure_capability_invocation_supported(
+            key_material: &DidKeyMaterial,
+            roles: &[KeyRole],
+        ) -> Result<(), Error<T>> {
+            if roles.contains(&KeyRole::CapabilityInvocation) {
+                ensure!(
+                    matches!(key_material, DidKeyMaterial::Multikey { .. }),
+                    Error::<T>::UnsupportedKeyFormatForCapabilityInvocation
+                );
+            }
             Ok(())
         }
 
-        fn validate_controller_for_did(
-            controller: &Option<Vec<u8>>,
-        ) -> Result<(), Error<T>> {
+        fn validate_public_key(public_key: &[u8]) -> Result<(), Error<T>> {
+            let _ =
+                mldsa44::Public::try_from(public_key).map_err(|_| Error::<T>::InvalidPublicKey)?;
+            Ok(())
+        }
+
+        fn validate_controller_for_did(controller: &Option<Vec<u8>>) -> Result<(), Error<T>> {
             if let Some(controller_did) = controller {
                 ensure!(
                     crate::did_utils::is_strict_did_uri::<T>(controller_did),
@@ -667,10 +707,7 @@ pub mod pallet {
         }
 
         fn validate_service(service: &ServiceEndpoint, did: &[u8]) -> Result<(), Error<T>> {
-            ensure!(
-                !service.id.is_empty(),
-                Error::<T>::InvalidServiceId
-            );
+            ensure!(!service.id.is_empty(), Error::<T>::InvalidServiceId);
             ensure!(
                 !service.endpoint.is_empty(),
                 Error::<T>::InvalidServiceEndpoint
@@ -740,9 +777,15 @@ pub mod pallet {
                 Error::<T>::InvalidAuthenticationKeyCount
             );
 
-            let pk =
-                mldsa44::Public::try_from(key.public_key.as_slice()).map_err(|_| Error::<T>::InvalidPublicKey)?;
-            ensure!(mldsa44_verify(&sig, payload, &pk), Error::<T>::InvalidSignature);
+            let DidKeyMaterial::Multikey { public_key, .. } = &key.key_material else {
+                return Err(Error::<T>::UnsupportedKeyFormatForCapabilityInvocation.into());
+            };
+            let pk = mldsa44::Public::try_from(public_key.as_slice())
+                .map_err(|_| Error::<T>::InvalidPublicKey)?;
+            ensure!(
+                mldsa44_verify(&sig, payload, &pk),
+                Error::<T>::InvalidSignature
+            );
             Ok(())
         }
 

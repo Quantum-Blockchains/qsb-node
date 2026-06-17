@@ -15,10 +15,28 @@ pub enum KeyRole {
 
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
+pub enum KeyMaterialInput {
+    Multikey(Vec<u8>),
+    Jwk(Vec<u8>),
+}
+
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
+pub enum DidKeyMaterial {
+    Multikey {
+        multicodec: u64,
+        public_key: Vec<u8>,
+    },
+    Jwk {
+        public_key_jwk: Vec<u8>,
+    },
+}
+
+#[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Encode, Decode, Eq, PartialEq, RuntimeDebug, TypeInfo)]
 pub struct DidKey {
     pub key_id: Vec<u8>,
-    pub multicodec: Option<u64>,
-    pub public_key: Vec<u8>,
+    pub key_material: DidKeyMaterial,
     pub roles: Vec<KeyRole>,
     pub controller: Option<Vec<u8>>,
     pub revoked: bool,
@@ -61,6 +79,8 @@ pub struct DidVerificationMethod {
     pub controller: Vec<u8>,
     #[cfg_attr(feature = "std", serde(rename = "publicKeyMultibase"))]
     pub public_key_multibase: Option<Vec<u8>>,
+    #[cfg_attr(feature = "std", serde(rename = "publicKeyJwk"))]
+    pub public_key_jwk: Option<Vec<u8>>,
 }
 
 #[cfg_attr(feature = "std", derive(serde::Serialize, serde::Deserialize))]

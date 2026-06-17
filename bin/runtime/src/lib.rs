@@ -395,6 +395,7 @@ where
 impl did::Config for Runtime {
     type RuntimeEvent = RuntimeEvent;
     type WeightInfo = did::default_weights::DefaultWeightInfo<Runtime>;
+    type MaxJwkLength = ConstU32<4096>;
 }
 
 impl schema::Config for Runtime {

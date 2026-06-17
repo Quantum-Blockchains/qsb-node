@@ -1,6 +1,6 @@
 use super::mock_runtime::{Did, RuntimeOrigin, System};
+use crate::{KeyMaterialInput, KeyRole, MetadataEntry};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use crate::{KeyRole, MetadataEntry};
 use codec::Encode;
 use frame_support::assert_ok;
 use sp_core::mldsa44;
@@ -104,10 +104,28 @@ pub(super) fn add_key_signature(
     roles: &[KeyRole],
     controller: &Option<Vec<u8>>,
 ) -> Vec<u8> {
+    add_key_signature_for_material(
+        signer,
+        did_input,
+        key_id_suffix,
+        &KeyMaterialInput::Multikey(new_public_key.to_vec()),
+        roles,
+        controller,
+    )
+}
+
+pub(super) fn add_key_signature_for_material(
+    signer: &mldsa44::Pair,
+    did_input: &[u8],
+    key_id_suffix: &Option<Vec<u8>>,
+    key_material: &KeyMaterialInput,
+    roles: &[KeyRole],
+    controller: &Option<Vec<u8>>,
+) -> Vec<u8> {
     let mut payload = DID_ADD_KEY_PREFIX.to_vec();
     payload.extend_from_slice(&did_input.to_vec().encode());
     payload.extend_from_slice(&key_id_suffix.encode());
-    payload.extend_from_slice(&new_public_key.to_vec().encode());
+    payload.extend_from_slice(&key_material.encode());
     payload.extend_from_slice(&roles.to_vec().encode());
     payload.extend_from_slice(&controller.encode());
     sign(signer, &payload)
@@ -133,10 +151,30 @@ pub(super) fn rotate_key_signature(
     new_controller: &Option<Vec<u8>>,
     roles: &[KeyRole],
 ) -> Vec<u8> {
+    rotate_key_signature_for_material(
+        signer,
+        did_input,
+        old_key_id,
+        &KeyMaterialInput::Multikey(new_public_key.to_vec()),
+        new_key_id_suffix,
+        new_controller,
+        roles,
+    )
+}
+
+pub(super) fn rotate_key_signature_for_material(
+    signer: &mldsa44::Pair,
+    did_input: &[u8],
+    old_key_id: &[u8],
+    key_material: &KeyMaterialInput,
+    new_key_id_suffix: &Option<Vec<u8>>,
+    new_controller: &Option<Vec<u8>>,
+    roles: &[KeyRole],
+) -> Vec<u8> {
     let mut payload = DID_ROTATE_KEY_PREFIX.to_vec();
     payload.extend_from_slice(&did_input.to_vec().encode());
     payload.extend_from_slice(&old_key_id.to_vec().encode());
-    payload.extend_from_slice(&new_public_key.to_vec().encode());
+    payload.extend_from_slice(&key_material.encode());
     payload.extend_from_slice(&new_key_id_suffix.encode());
     payload.extend_from_slice(&new_controller.encode());
     payload.extend_from_slice(&roles.to_vec().encode());
