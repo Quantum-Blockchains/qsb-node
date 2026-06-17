@@ -2,8 +2,8 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use crate::did_utils;
 use crate::pallet::{Config, DidRecords};
 use crate::{
-    DidDetails, DidDocument, DidDocumentMetadata, DidResolutionMetadata, DidResolutionResult,
-    DidVerificationMethod, KeyRole,
+    DidDetails, DidDocument, DidDocumentMetadata, DidKeyMaterial, DidResolutionMetadata,
+    DidResolutionResult, DidVerificationMethod, KeyRole,
 };
 use sp_std::vec;
 use sp_std::vec::Vec;
@@ -46,13 +46,26 @@ fn map_to_did_document(did: &[u8], details: &DidDetails) -> DidDocument {
         let controller = key.controller.clone().unwrap_or_else(|| did.to_vec());
         let vm_id = key.key_id.clone();
 
+        let (vm_type, public_key_multibase, public_key_jwk) = match &key.key_material {
+            DidKeyMaterial::Multikey {
+                multicodec,
+                public_key,
+            } => (
+                b"Multikey".to_vec(),
+                Some(multibase_from_public_key(public_key, *multicodec)),
+                None,
+            ),
+            DidKeyMaterial::Jwk { public_key_jwk } => {
+                (b"JsonWebKey2020".to_vec(), None, Some(public_key_jwk.clone()))
+            }
+        };
+
         verification_method.push(DidVerificationMethod {
             id: vm_id.clone(),
-            vm_type: b"Multikey".to_vec(),
+            vm_type,
             controller,
-            public_key_multibase: key
-                .multicodec
-                .map(|codec| multibase_from_public_key(&key.public_key, codec)),
+            public_key_multibase,
+            public_key_jwk,
         });
 
         for role in &key.roles {

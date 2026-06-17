@@ -47,16 +47,21 @@ DID key role enum:
 - `CapabilityInvocation`
 - `CapabilityDelegation`
 
-Note: in the current implementation, DID call authorization requires an active key with the `Authentication` role.
-The pallet also enforces an invariant: each DID must have exactly 1 active `Authentication` key.
+Note: DID call authorization uses the active `#update` key with the `CapabilityInvocation` role.
+That key must be a Multikey ML-DSA-44 key.
 
 ### 3.2. `DidKey`
 
 Represents a key inside a DID:
 
-- `public_key: Vec<u8>` - raw public key bytes,
+- `key_material: DidKeyMaterial` - either normalized Multikey material or opaque JWK bytes,
 - `roles: Vec<KeyRole>` - roles assigned to the key,
 - `revoked: bool` - revocation flag.
+
+Key material variants:
+
+- `Multikey { multicodec, public_key }` - validated Multikey input normalized into raw public key bytes plus multicodec.
+- `Jwk { public_key_jwk }` - opaque stored byte sequence. The pallet does not parse or validate JSON/JWK fields.
 
 ### 3.3. `ServiceEndpoint`
 
@@ -154,33 +159,36 @@ Errors:
 
 ## 7.1. `create_did`: self-signature with provided key
 
-`create_did` verifies the signature against the provided `public_key`:
+`create_did` accepts only Multikey ML-DSA-44 input and verifies the signature against the decoded raw key:
 
-1. `public_key` -> `mldsa44::Public::try_from(...)`
-2. `did_signature` -> `mldsa44::Signature::try_from(...)`
-3. `mldsa44_verify(signature, payload, public_key)`
+1. `public_key` -> Multikey validation and multicodec check.
+2. decoded raw key -> `mldsa44::Public::try_from(...)`
+3. `did_signature` -> `mldsa44::Signature::try_from(...)`
+4. `mldsa44_verify(signature, payload, raw_public_key)`
 
 Errors:
 
 - invalid public key format -> `InvalidPublicKey`
+- invalid Multikey format -> `InvalidMultikey`
+- unsupported create/update multicodec -> `UnsupportedMultikeyCodec`
 - invalid signature format -> `InvalidDidSignature`
 - signature mismatch -> `InvalidSignature`
 
-## 7.2. Other calls: signature by active `Authentication` key
+## 7.2. Other calls: signature by active `#update` key
 
 `verify_did_signature(did_id, signature, payload)`:
 
 1. Loads `DidDetails` from `DidRecords`.
-2. Validates invariant: exactly 1 active `Authentication` key.
+2. Finds the active `#update` key.
 3. Parses `mldsa44::Signature`.
-4. Iterates over `keys` filtered to `!revoked` and `Authentication` role.
-5. Tries `mldsa44_verify` for each candidate key.
-6. If any verification succeeds, the call is authorized.
+4. Ensures the key has `CapabilityInvocation`.
+5. Ensures the key material is Multikey and parses the raw ML-DSA-44 public key.
+6. Verifies `mldsa44_verify(signature, payload, public_key)`.
 
 Important:
 
-- Only keys with the `Authentication` role can authorize DID calls.
-- If a DID has 0 or >1 active `Authentication` keys, the operation fails with `InvalidAuthenticationKeyCount`.
+- Only the active `#update` key can authorize DID calls.
+- If the DID has no active `#update` key or the key lacks `CapabilityInvocation`, the operation fails with `InvalidAuthenticationKeyCount`.
 - The function does not return which exact key signed the call.
 
 ## 8. Extrinsics (calls)
@@ -192,7 +200,7 @@ Weight implementation is benchmark-generated and stored in `pallets/did/src/defa
 
 Parameters:
 
-- `public_key: Vec<u8>`
+- `public_key: Vec<u8>` - Multikey ML-DSA-44
 - `did_signature: Vec<u8>`
 
 Signature payload:
@@ -203,14 +211,15 @@ Signature payload:
 
 Behavior:
 
-1. Computes `did_id` from `public_key`.
-2. Ensures the record does not exist (`DidAlreadyExists`).
-3. Verifies the signature against the provided key.
-4. Creates DID with one key:
-   - `public_key`
-   - `roles = [Authentication]`
+1. Validates and decodes Multikey input.
+2. Computes `did_id` from the raw public key bytes.
+3. Ensures the record does not exist (`DidAlreadyExists`).
+4. Verifies the signature against the decoded raw key.
+5. Creates DID with one `#update` key:
+   - `key_material = Multikey { multicodec, public_key }`
+   - `roles = [CapabilityInvocation]`
    - `revoked = false`
-5. Initializes `version = 0`, `deactivated = false`, empty `services` and `metadata`.
+6. Initializes `version = 0`, `deactivated = false`, empty `services` and `metadata`.
 
 Event:
 
@@ -221,64 +230,71 @@ Event:
 Parameters:
 
 - `did_id: Vec<u8>`
-- `public_key: Vec<u8>`
+- `key_id_suffix: Option<Vec<u8>>`
+- `key_material: KeyMaterialInput`
 - `roles: Vec<KeyRole>`
+- `controller: Option<Vec<u8>>`
 - `did_signature: Vec<u8>`
 
 Payload:
 
 ```text
-"QSB_DID_ADD_KEY" ++ SCALE(did_id) ++ SCALE(public_key) ++ SCALE(roles)
+"QSB_DID_ADD_KEY"
+  ++ SCALE(did_id)
+  ++ SCALE(key_id_suffix)
+  ++ SCALE(key_material)
+  ++ SCALE(roles)
+  ++ SCALE(controller)
 ```
 
 Conditions:
 
 - DID exists,
 - DID is not deactivated,
-- key with the same `public_key` does not already exist,
-- if the new key includes `Authentication`, there must be no active `Authentication` key already.
+- key with the same normalized `key_material` does not already exist,
+- Multikey input is structurally validated and known codec lengths are checked,
+- JWK input is stored as an opaque byte sequence; it is only checked for non-empty content and `MaxJwkLength`,
+- JWK input cannot be assigned `CapabilityInvocation`.
 
 Effect:
 
-- adds `DidKey { public_key, roles, revoked: false }`,
-- after operation, DID must still have exactly 1 active `Authentication`,
+- adds `DidKey { key_material, roles, controller, revoked: false }`,
 - `version += 1`.
 
 Event:
 
-- `KeyAdded { did, public_key }`
+- `KeyAdded { did, key_material }`
 
 ## 8.3. `revoke_key` (`call_index(2)`)
 
 Parameters:
 
 - `did_id: Vec<u8>`
-- `public_key: Vec<u8>`
+- `key_id: Vec<u8>`
 - `did_signature: Vec<u8>`
 
 Payload:
 
 ```text
-"QSB_DID_REVOKE_KEY" ++ SCALE(did_id) ++ SCALE(public_key)
+"QSB_DID_REVOKE_KEY" ++ SCALE(did_id) ++ SCALE(key_id)
 ```
 
 Conditions:
 
 - DID exists,
 - DID is not deactivated,
-- target key exists,
+- target key id exists,
 - target key is not already revoked,
-- if target key has `Authentication`, revoke is allowed only if another active `Authentication` key exists.
+- the `#update` key cannot be revoked through `revoke_key`.
 
 Effect:
 
 - `key.revoked = true`,
-- after operation, DID must still have exactly 1 active `Authentication`,
 - `version += 1`.
 
 Event:
 
-- `KeyRevoked { did, public_key }`
+- `KeyRevoked { did, key_material }`
 
 ## 8.4. `deactivate_did` (`call_index(3)`)
 
@@ -428,8 +444,10 @@ Event:
 Parameters:
 
 - `did_id: Vec<u8>`
-- `old_public_key: Vec<u8>`
-- `new_public_key: Vec<u8>`
+- `old_key_id: Vec<u8>`
+- `new_key_material: KeyMaterialInput`
+- `new_key_id_suffix: Option<Vec<u8>>`
+- `new_controller: Option<Vec<u8>>`
 - `roles: Vec<KeyRole>`
 - `did_signature: Vec<u8>`
 
@@ -438,8 +456,10 @@ Payload:
 ```text
 "QSB_DID_ROTATE_KEY"
   ++ SCALE(did_id)
-  ++ SCALE(old_public_key)
-  ++ SCALE(new_public_key)
+  ++ SCALE(old_key_id)
+  ++ SCALE(new_key_material)
+  ++ SCALE(new_key_id_suffix)
+  ++ SCALE(new_controller)
   ++ SCALE(roles)
 ```
 
@@ -447,35 +467,34 @@ Conditions:
 
 - DID exists,
 - DID is not deactivated,
-- `new_public_key` does not already exist in `keys`,
-- `old_public_key` exists and is not revoked,
-- if `old_public_key` has `Authentication`, `new_public_key` must also have it,
-- if `old_public_key` does not have `Authentication`, `new_public_key` cannot add `Authentication` if an active `Authentication` already exists.
+- `new_key_material` does not already exist in `keys`,
+- `old_key_id` exists and is not revoked,
+- rotating the `#update` key requires the new key to be Multikey ML-DSA-44 with `CapabilityInvocation`,
+- JWK input is opaque and cannot be assigned `CapabilityInvocation`.
 
 Effect:
 
-- `old_public_key.revoked = true`,
+- old key is marked revoked,
 - adds a new active key with provided roles,
-- after operation, DID must still have exactly 1 active `Authentication`,
 - `version += 1`.
 
 Event:
 
-- `KeyRotated { did, old_public_key, new_public_key }`
+- `KeyRotated { did, old_key_material, new_key_material }`
 
 ## 8.10. `update_roles` (`call_index(9)`)
 
 Parameters:
 
 - `did_id: Vec<u8>`
-- `public_key: Vec<u8>`
+- `key_id: Vec<u8>`
 - `roles: Vec<KeyRole>`
 - `did_signature: Vec<u8>`
 
 Payload:
 
 ```text
-"QSB_DID_UPDATE_ROLES" ++ SCALE(did_id) ++ SCALE(public_key) ++ SCALE(roles)
+"QSB_DID_UPDATE_ROLES" ++ SCALE(did_id) ++ SCALE(key_id) ++ SCALE(roles)
 ```
 
 Conditions:
@@ -483,18 +502,17 @@ Conditions:
 - DID exists,
 - DID is not deactivated,
 - key exists and is not revoked,
-- cannot remove `Authentication` from the last active `Authentication` key,
-- cannot add `Authentication` to another active key if an active `Authentication` already exists.
+- the `#update` key must keep `CapabilityInvocation`,
+- JWK keys cannot be assigned `CapabilityInvocation`.
 
 Effect:
 
 - updates `key.roles = roles`,
-- after operation, DID must still have exactly 1 active `Authentication`,
 - `version += 1`.
 
 Event:
 
-- `RolesUpdated { did, public_key }`
+- `RolesUpdated { did, key_material }`
 
 ## 9. Public helper API
 
@@ -509,11 +527,11 @@ Event:
 Events are emitted only after a successful state mutation.
 
 - `DidCreated(did)` - confirms DID creation and returns canonical DID string.
-- `KeyAdded(did, public_key)` - indicates a new key was added to the DID document.
-- `KeyRevoked(did, public_key)` - indicates a DID key was revoked.
+- `KeyAdded(did, key_material)` - indicates a new key was added to the DID document.
+- `KeyRevoked(did, key_material)` - indicates a DID key was revoked.
 - `DidDeactivated(did)` - confirms DID deactivation.
-- `KeyRotated(did, old_public_key, new_public_key)` - records key rotation (old key revoked, new key added).
-- `RolesUpdated(did, public_key)` - indicates role set update for a key.
+- `KeyRotated(did, old_key_material, new_key_material)` - records key rotation (old key revoked, new key added).
+- `RolesUpdated(did, key_material)` - indicates role set update for a key.
 - `ServiceAdded(did, service_id)` - indicates a service endpoint was added.
 - `ServiceRemoved(did, service_id)` - indicates a service endpoint was removed.
 - `MetadataSet(did, key)` - confirms metadata insert/update for a key.
@@ -525,12 +543,12 @@ Events are emitted only after a successful state mutation.
 - `DidNotFound` - DID not found in storage.
 - `DidDeactivated` - operation is not allowed on a deactivated DID.
 - `KeyAlreadyExists` - key already exists in DID.
-- `AuthenticationKeyAlreadyExists` - attempt to create a second active key with `Authentication` role.
+- `AuthenticationKeyAlreadyExists` - legacy error retained in the pallet error enum.
 - `KeyNotFound` - key does not exist.
 - `KeyAlreadyRevoked` - key is already revoked.
-- `CannotRevokeLastAuthenticationKey` - attempt to revoke the last active `Authentication` key.
-- `CannotRemoveLastAuthenticationRole` - attempt to remove `Authentication` role from the last active key.
-- `InvalidAuthenticationKeyCount` - DID does not satisfy invariant of exactly 1 active `Authentication` key.
+- `CannotRevokeLastAuthenticationKey` - attempt to revoke the `#update` key.
+- `CannotRemoveLastAuthenticationRole` - attempt to remove `CapabilityInvocation` from the `#update` key.
+- `InvalidAuthenticationKeyCount` - missing or invalid active `#update` authorization key.
 - `InvalidDidId` - invalid DID/base58 format or decoded length != 32.
 - `ServiceAlreadyExists` - duplicate `service.id`.
 - `ServiceNotFound` - service with given `id` not found.
@@ -538,21 +556,27 @@ Events are emitted only after a successful state mutation.
 - `InvalidSignature` - signature verification failed.
 - `InvalidPublicKey` - invalid public key format (mainly in `create_did`).
 - `InvalidDidSignature` - invalid signature format.
+- `InvalidMultikey` - invalid Multikey lexical structure or known codec length.
+- `UnsupportedMultikeyCodec` - unsupported Multikey codec for `create_did` or `#update` rotation.
+- `InvalidJwk` - JWK byte sequence is empty.
+- `JwkTooLarge` - JWK byte sequence exceeds `MaxJwkLength`.
+- `UnsupportedKeyFormatForCapabilityInvocation` - non-Multikey material was assigned `CapabilityInvocation` or used for DID authorization.
 
 ## 12. Security behavior and current limitations
 
-- DID call authorization uses only the active key with `Authentication` role.
-- The pallet enforces invariant: exactly 1 active `Authentication` key per DID.
+- DID call authorization uses only the active `#update` key with `CapabilityInvocation`.
+- The `#update` key must be Multikey ML-DSA-44.
+- JWK material is stored opaquely, is not parsed as JSON, and cannot receive `CapabilityInvocation`.
 - `verify_did_signature` does not return which key signed the call, so events do not identify the DID-level signing key.
 - Extrinsic weights are benchmarked and mapped through `T::WeightInfo`.
 
 ## 13. Example flow
 
-1. User calls `create_did(public_key, did_signature)`.
-2. DID is created with one active `Authentication` key.
-3. `add_key` can add additional keys (for example backup keys), but without creating a second active `Authentication`.
-4. DID document changes are authorized by signature from the active `Authentication` key.
-5. Keys can be revoked or rotated, but the single-active-`Authentication` invariant cannot be broken.
+1. User calls `create_did(public_key, did_signature)` with a Multikey ML-DSA-44 key.
+2. DID is created with one active `#update` key using `CapabilityInvocation`.
+3. `add_key` can add additional Multikey or opaque JWK material.
+4. DID document changes are authorized by signature from the active `#update` key.
+5. Keys can be revoked or rotated, but `#update` remains Multikey ML-DSA-44.
 6. `deactivate_did` blocks further modifications.
 
 ## 14. Suggested future improvements (optional)

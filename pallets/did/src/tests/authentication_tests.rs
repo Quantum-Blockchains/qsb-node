@@ -1,6 +1,6 @@
 use super::mock_runtime::{new_test_ext, Did, RuntimeEvent, RuntimeOrigin, System, Test};
 use super::test_helpers::*;
-use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry};
+use crate::{pallet::DidRecords, DidKeyMaterial, Error, KeyMaterialInput, KeyRole, MetadataEntry};
 use frame_support::{assert_noop, assert_ok};
 
 #[test]
@@ -13,7 +13,13 @@ fn create_did_creates_single_active_authentication_key() {
         assert!(!details.deactivated);
         assert_eq!(details.version, 0);
         assert_eq!(details.keys.len(), 1);
-        assert_eq!(details.keys[0].public_key, owner_pk);
+        assert_eq!(
+            details.keys[0].key_material,
+            DidKeyMaterial::Multikey {
+                multicodec: 0x1210,
+                public_key: owner_pk
+            }
+        );
         assert_eq!(details.keys[0].roles, vec![KeyRole::CapabilityInvocation]);
         assert!(!details.keys[0].revoked);
     });
@@ -43,7 +49,7 @@ fn add_key_allows_multiple_authentication_keys() {
             RuntimeOrigin::signed(1),
             did_input,
             key_id_suffix,
-            second_multikey,
+            KeyMaterialInput::Multikey(second_multikey),
             roles,
             controller,
             did_signature
@@ -61,7 +67,12 @@ fn revoke_key_rejects_update_key() {
         let did_signature = revoke_key_signature(&owner_pair, &did_input, &owner_key_id);
 
         assert_noop!(
-            Did::revoke_key(RuntimeOrigin::signed(1), did_input, owner_key_id, did_signature),
+            Did::revoke_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                owner_key_id,
+                did_signature
+            ),
             Error::<Test>::CannotRevokeLastAuthenticationKey
         );
     });
@@ -115,7 +126,7 @@ fn rotate_update_key_keeps_update_authority_with_capability_invocation_role() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             owner_key_id,
-            new_multikey,
+            KeyMaterialInput::Multikey(new_multikey),
             new_key_id_suffix,
             new_controller,
             new_roles,
@@ -128,7 +139,12 @@ fn rotate_update_key_keeps_update_authority_with_capability_invocation_role() {
         };
         let old_sig = set_metadata_signature(&owner_pair, &did_input, &entry);
         assert_noop!(
-            Did::set_metadata(RuntimeOrigin::signed(1), did_input.clone(), entry.clone(), old_sig),
+            Did::set_metadata(
+                RuntimeOrigin::signed(1),
+                did_input.clone(),
+                entry.clone(),
+                old_sig
+            ),
             Error::<Test>::InvalidSignature
         );
         let new_sig = set_metadata_signature(&new_pair, &did_input, &entry);
@@ -165,7 +181,7 @@ fn non_authentication_key_cannot_authorize_calls() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             key_id_suffix,
-            aux_multikey,
+            KeyMaterialInput::Multikey(aux_multikey),
             aux_roles,
             controller,
             add_sig
@@ -224,7 +240,7 @@ fn rotate_authentication_key_moves_authority_to_new_key() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             owner_key_id,
-            new_multikey.clone(),
+            KeyMaterialInput::Multikey(new_multikey.clone()),
             new_key_id_suffix,
             new_controller,
             new_roles,
@@ -232,8 +248,11 @@ fn rotate_authentication_key_moves_authority_to_new_key() {
         ));
         System::assert_last_event(RuntimeEvent::Did(crate::Event::KeyRotated {
             did: did_input.clone(),
-            old_public_key: owner_pk.clone(),
-            new_public_key: new_multikey,
+            old_key_material: DidKeyMaterial::Multikey {
+                multicodec: 0x1210,
+                public_key: owner_pk.clone(),
+            },
+            new_key_material: KeyMaterialInput::Multikey(new_multikey),
         }));
 
         let entry = MetadataEntry {
@@ -302,7 +321,7 @@ fn rotate_update_key_rejects_non_mldsa44_codec() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 owner_key_id,
-                wrong_codec_multikey,
+                KeyMaterialInput::Multikey(wrong_codec_multikey),
                 new_key_id_suffix,
                 new_controller,
                 new_roles,
@@ -342,7 +361,7 @@ fn rotate_update_key_requires_capability_invocation_role() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 owner_key_id,
-                new_multikey,
+                KeyMaterialInput::Multikey(new_multikey),
                 new_key_id_suffix,
                 new_controller,
                 new_roles,

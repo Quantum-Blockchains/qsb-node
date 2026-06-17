@@ -1,9 +1,13 @@
 use super::mock_runtime::{new_test_ext, Did, RuntimeOrigin, Test};
 use super::test_helpers::{
-    add_key_signature, create_did, keypair, multikey_from_codec_and_raw, multikey_from_raw_mldsa44, public_key,
-    set_metadata_signature, sign,
+    add_key_signature, add_key_signature_for_material, create_did, keypair,
+    multikey_from_codec_and_raw, multikey_from_raw_mldsa44, public_key,
+    rotate_key_signature_for_material, set_metadata_signature, sign,
 };
-use crate::{pallet::DidRecords, Error, KeyRole, MetadataEntry, ServiceEndpoint};
+use crate::{
+    pallet::DidRecords, DidKeyMaterial, Error, KeyMaterialInput, KeyRole, MetadataEntry,
+    ServiceEndpoint,
+};
 use codec::Encode;
 use frame_support::{assert_noop, assert_ok};
 
@@ -65,8 +69,10 @@ fn multiple_authentication_keys_do_not_break_update_authority() {
             let details = maybe_details.as_mut().expect("did should exist");
             details.keys.push(crate::DidKey {
                 key_id: b"did:qsb:test#extra-auth".to_vec(),
-                multicodec: Some(0x1210),
-                public_key: second_pk,
+                key_material: DidKeyMaterial::Multikey {
+                    multicodec: 0x1210,
+                    public_key: second_pk,
+                },
                 roles: vec![KeyRole::Authentication],
                 controller: None,
                 revoked: false,
@@ -179,7 +185,7 @@ fn add_key_rejects_duplicate_key_id_suffix() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             first_suffix,
-            first_multikey,
+            KeyMaterialInput::Multikey(first_multikey),
             first_roles,
             first_controller,
             first_sig
@@ -204,7 +210,7 @@ fn add_key_rejects_duplicate_key_id_suffix() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 dup_suffix,
-                second_multikey,
+                KeyMaterialInput::Multikey(second_multikey),
                 second_roles,
                 second_controller,
                 second_sig
@@ -239,7 +245,7 @@ fn add_key_normalizes_suffix_without_hash() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             key_suffix,
-            new_multikey,
+            KeyMaterialInput::Multikey(new_multikey),
             roles,
             controller,
             sig
@@ -249,7 +255,13 @@ fn add_key_normalizes_suffix_without_hash() {
         let key = details
             .keys
             .iter()
-            .find(|k| k.public_key == new_pk)
+            .find(|k| {
+                k.key_material
+                    == DidKeyMaterial::Multikey {
+                        multicodec: 0x1210,
+                        public_key: new_pk.clone(),
+                    }
+            })
             .expect("added key should exist");
         assert!(key.key_id.ends_with(b"#key-12"));
     });
@@ -281,7 +293,7 @@ fn add_key_rejects_full_did_key_id_suffix() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 invalid_suffix,
-                new_multikey,
+                KeyMaterialInput::Multikey(new_multikey),
                 roles,
                 controller,
                 sig
@@ -317,7 +329,7 @@ fn add_key_rejects_invalid_key_id_suffix_characters() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 invalid_suffix,
-                new_multikey,
+                KeyMaterialInput::Multikey(new_multikey),
                 roles,
                 controller,
                 sig
@@ -377,7 +389,7 @@ fn auto_generated_key_id_skips_taken_index() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             None,
-            first_multikey,
+            KeyMaterialInput::Multikey(first_multikey),
             first_roles,
             None,
             first_sig
@@ -399,7 +411,7 @@ fn auto_generated_key_id_skips_taken_index() {
             RuntimeOrigin::signed(1),
             did_input.clone(),
             None,
-            second_multikey,
+            KeyMaterialInput::Multikey(second_multikey),
             second_roles,
             None,
             second_sig
@@ -409,7 +421,13 @@ fn auto_generated_key_id_skips_taken_index() {
         let second_key = details
             .keys
             .iter()
-            .find(|k| k.public_key == second_pk)
+            .find(|k| {
+                k.key_material
+                    == DidKeyMaterial::Multikey {
+                        multicodec: 0x1210,
+                        public_key: second_pk.clone(),
+                    }
+            })
             .expect("second key should exist");
         assert!(second_key.key_id.ends_with(b"#key-2"));
     });
@@ -439,7 +457,7 @@ fn add_key_rejects_invalid_length_for_known_codec() {
                 RuntimeOrigin::signed(1),
                 did_input,
                 key_suffix,
-                bad_ed25519_multikey,
+                KeyMaterialInput::Multikey(bad_ed25519_multikey),
                 roles,
                 controller,
                 sig
@@ -472,10 +490,190 @@ fn add_key_allows_unknown_codec_when_multikey_is_valid() {
             RuntimeOrigin::signed(1),
             did_input,
             key_suffix,
-            unknown_codec_multikey,
+            KeyMaterialInput::Multikey(unknown_codec_multikey),
             roles,
             controller,
             sig
         ));
+    });
+}
+
+#[test]
+fn add_key_accepts_jwk_as_opaque_material() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let jwk = br#"{"kty":"OKP","crv":"Ed25519","x":"abc"}"#.to_vec();
+        let key_material = KeyMaterialInput::Jwk(jwk.clone());
+        let roles = vec![KeyRole::AssertionMethod];
+        let key_suffix = Some(b"jwk-1".to_vec());
+        let controller = None;
+        let sig = add_key_signature_for_material(
+            &owner_pair,
+            &did_input,
+            &key_suffix,
+            &key_material,
+            &roles,
+            &controller,
+        );
+
+        assert_ok!(Did::add_key(
+            RuntimeOrigin::signed(1),
+            did_input.clone(),
+            key_suffix,
+            key_material,
+            roles,
+            controller,
+            sig
+        ));
+
+        let details = Did::get_did(did_input).expect("did should exist");
+        let key = details
+            .keys
+            .iter()
+            .find(|k| {
+                k.key_material
+                    == DidKeyMaterial::Jwk {
+                        public_key_jwk: jwk.clone(),
+                    }
+            })
+            .expect("jwk key should exist");
+        assert!(key.key_id.ends_with(b"#jwk-1"));
+    });
+}
+
+#[test]
+fn add_key_rejects_empty_jwk() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let key_material = KeyMaterialInput::Jwk(Vec::new());
+        let roles = vec![KeyRole::AssertionMethod];
+        let key_suffix = Some(b"empty-jwk".to_vec());
+        let controller = None;
+        let sig = add_key_signature_for_material(
+            &owner_pair,
+            &did_input,
+            &key_suffix,
+            &key_material,
+            &roles,
+            &controller,
+        );
+
+        assert_noop!(
+            Did::add_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                key_suffix,
+                key_material,
+                roles,
+                controller,
+                sig
+            ),
+            Error::<Test>::InvalidJwk
+        );
+    });
+}
+
+#[test]
+fn add_key_rejects_oversized_jwk() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let key_material = KeyMaterialInput::Jwk(vec![b'a'; 4097]);
+        let roles = vec![KeyRole::AssertionMethod];
+        let key_suffix = Some(b"large-jwk".to_vec());
+        let controller = None;
+        let sig = add_key_signature_for_material(
+            &owner_pair,
+            &did_input,
+            &key_suffix,
+            &key_material,
+            &roles,
+            &controller,
+        );
+
+        assert_noop!(
+            Did::add_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                key_suffix,
+                key_material,
+                roles,
+                controller,
+                sig
+            ),
+            Error::<Test>::JwkTooLarge
+        );
+    });
+}
+
+#[test]
+fn add_key_rejects_jwk_with_capability_invocation() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let key_material = KeyMaterialInput::Jwk(br#"{"kty":"OKP"}"#.to_vec());
+        let roles = vec![KeyRole::CapabilityInvocation];
+        let key_suffix = Some(b"jwk-capability".to_vec());
+        let controller = None;
+        let sig = add_key_signature_for_material(
+            &owner_pair,
+            &did_input,
+            &key_suffix,
+            &key_material,
+            &roles,
+            &controller,
+        );
+
+        assert_noop!(
+            Did::add_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                key_suffix,
+                key_material,
+                roles,
+                controller,
+                sig
+            ),
+            Error::<Test>::UnsupportedKeyFormatForCapabilityInvocation
+        );
+    });
+}
+
+#[test]
+fn rotate_update_key_rejects_jwk() {
+    new_test_ext().execute_with(|| {
+        let owner_pair = keypair(1);
+        let (_did_id, did_input, _owner_pk) = create_did(1, &owner_pair);
+        let mut owner_key_id = did_input.clone();
+        owner_key_id.extend_from_slice(b"#update");
+        let key_material = KeyMaterialInput::Jwk(br#"{"kty":"OKP"}"#.to_vec());
+        let roles = vec![KeyRole::AssertionMethod];
+        let new_key_id_suffix = None;
+        let new_controller = None;
+        let sig = rotate_key_signature_for_material(
+            &owner_pair,
+            &did_input,
+            &owner_key_id,
+            &key_material,
+            &new_key_id_suffix,
+            &new_controller,
+            &roles,
+        );
+
+        assert_noop!(
+            Did::rotate_key(
+                RuntimeOrigin::signed(1),
+                did_input,
+                owner_key_id,
+                key_material,
+                new_key_id_suffix,
+                new_controller,
+                roles,
+                sig
+            ),
+            Error::<Test>::UnsupportedKeyFormatForCapabilityInvocation
+        );
     });
 }

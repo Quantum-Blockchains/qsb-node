@@ -44,6 +44,7 @@ impl frame_system::Config for Test {
 impl pallet_did::pallet::Config for Test {
     type RuntimeEvent = RuntimeEvent;
     type WeightInfo = pallet_did::default_weights::DefaultWeightInfo<Test>;
+    type MaxJwkLength = frame_support::traits::ConstU32<4096>;
 }
 
 pub fn new_test_ext() -> sp_io::TestExternalities {
